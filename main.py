@@ -127,3 +127,7 @@ result = streamlit_swipecards(
 
 if result:
     st.write("Dernière action swipe :", result)
+
+
+# Petit ajout temporaire en haut du fichier
+# Redeploy test for Streamlit Cloud
