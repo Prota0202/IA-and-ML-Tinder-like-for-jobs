@@ -1,7 +1,7 @@
-streamlit
-pandas
-scikit-learn
-langchain
+streamlit>=1.30
+pandas>=2.0
+scikit-learn>=1.3
+langchain>=0.1.0
 langchain_mistralai
 python-dotenv
 streamlit-swipecards
