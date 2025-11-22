@@ -1,0 +1,67 @@
+Lababidi Abdelbadi
+Bruxelles – Belgique
++32 (485) 466 702
+Abdelbadi1@protonmail.com
+https://github.com/Prota0202
+
+Formation
+ECAM Bruxelles
+Master en ingénierie (en cours), spécialisation : Systèmes Informatiques & Infrastructure (2024–2026)
+
+ECAM Bruxelles
+Bachelier en Ingénierie Industrielle (2021–2024)
+
+ULB Bruxelles
+Master (interrompu), Sciences Biomédicales (2020–2021)
+
+Institut Marie Immaculée Anderlecht
+Diplôme d’études secondaires (2020)
+
+Compétences techniques
+Systèmes d’exploitation :
+Linux (Kali, Ubuntu, Manjaro) – administration et dépannage ; Windows Server (bases)
+
+Virtualisation :
+VirtualBox/UTM – création, configuration, snapshots, tests ; Docker (bases)
+
+Réseaux :
+TCP/IP, DNS, DHCP, VPN, VLAN, pfSense (bases)
+
+Programmation & scripts :
+Python, Bash, C, SQL, JavaScript
+
+Matériel :
+Montage de PC haute performance, optimisation de la stabilité, diagnostic de pannes
+
+Documentation :
+Procédures, guides techniques, schémas ; LaTeX avancé
+
+Compétences acquises en stage
+Compréhension basique et analyse de simples architectures systèmes, identification des principaux composants techniques
+
+Utilisation pratique de machines virtuelles VirtualBox (création, configuration, tests fonctionnels)
+
+Rédaction de procédures techniques et documentation utilisateur
+
+Support technique de premier niveau
+
+Projets sélectionnés
+Documentation technique : Observation et documentation d’infrastructures réseau industrielles (commutateurs Cisco, systèmes de caméras, salle serveur, KNX basique via ETS/ETSS)
+
+Laboratoire personnel de sécurité : Analyse et durcissement d’un environnement contrôlé Linux (Kali) sur équipement personnel uniquement
+
+Scripts utilitaires sur GitHub : Petits utilitaires Python/JavaScript documentés (github.com/Prota0202)
+
+Langues
+francais : C2
+
+Anglais : C1
+
+Arabe : C2
+
+Néerlandais : A2
+
+Informations complémentaires
+Période de stage requise (ECAM) : du 5 janvier 2026 au 20 février 2026 (environ 30 jours)
+
+Possibilité de réaliser un mémoire de master dans la même entreprise en 2026 (début entre le 16–23 février 2026, fin vers le 18 mai 2026)
