@@ -165,9 +165,9 @@ def extract_pref_contrat(cv_text: str) -> Dict[str, Any]:
 # Le LLM doit aussi générer des questions pour les champs manquants.
 PROMPT_STR = (
 	"Tu reçois le texte intégral d'un CV. Objectif: préparer la recherche d'emploi. "
-	"1) Extrait STRICTEMENT les informations présentes. 2) Génère des questions pertinentes à poser à l'utilisateur pour chaque champ manquant. "
+	"1) Extrait STRICTEMENT les informations présentes. 2) Génère des questions pertinentes pour CHAQUE champ manquant. "
 	"Ne fabrique pas d'information absente.\n"
-	"Renvoie SEULEMENT un JSON valide: {\n"
+	"Renvoie SEULEMENT un JSON valide du format exact: {\n"
 	"  \"etudes\": [ { \"diplome\":..., \"domaine\":..., \"institution\":..., \"periode\":... } ],\n"
 	"  \"domaines_preference\": [ ... ],\n"
 	"  \"langues\": [ { \"langue\":..., \"niveau\":... } ],\n"
@@ -175,15 +175,22 @@ PROMPT_STR = (
 	"  \"regime_travail_recherche\": ...,\n"
 	"  \"localisation\": { \"ville\":..., \"code_postal\":... },\n"
 	"  \"autres\": [ ... ],\n"
-	"  \"questions\": [ { \"champ\": \"nom_du_champ\", \"question\": \"Texte question claire\", \"format_attendu\": \"exemple ou options\" } ]\n"
+	"  \"questions\": [ {\n"
+	"      \"champ\": \"nom_du_champ\",\n"
+	"      \"question\": \"Texte question claire\",\n"
+	"      \"format_attendu\": \"exemple ou options\",\n"
+	"      \"type\": \"choice|text\",\n"
+	"      \"options\": [\"option1\", \"option2\"]\n"
+	"  } ]\n"
 	"}\n"
 	"Règles supplémentaires:\n"
 	"- Interprète synonymes type de contrat: CDI -> Durée indéterminée; CDD -> Durée déterminée; Freelance/indépendant -> Contrat collaboration indépendant; mi-temps -> Temps partiel.\n"
-	"- Valeurs autorisées type_contrat_recherche (sélectionne la meilleure si CV en offre plusieurs): Intérimaire avec option sur durée indéterminée, Durée indéterminée, Intérimaire, Durée déterminée, Etudiant, Remplacement, Contrat collaboration indépendant, Flexi-Jobs, Journalier (occasionnel ou saisonnier), Salarié statutaire, Nettement défini.\n"
+	"- Valeurs autorisées type_contrat_recherche (sélectionne la meilleure si le CV en offre plusieurs): Intérimaire avec option sur durée indéterminée, Durée indéterminée, Intérimaire, Durée déterminée, Etudiant, Remplacement, Contrat collaboration indépendant, Flexi-Jobs, Journalier (occasionnel ou saisonnier), Salarié statutaire, Nettement défini.\n"
 	"- Valeurs autorisées regime_travail_recherche: Temps plein, Temps partiel.\n"
 	"- Si localisation partielle (absence code postal) laisse code_postal à null.\n"
-	"- Ajoute une question uniquement si champ est null/[] après extraction stricte.\n"
-	"Réponds UNIQUEMENT avec le JSON.\n\nCV:\n{cv_text}"
+	"- N'AJOUTE DES QUESTIONS QUE pour les champs NULL/VIDES après extraction stricte.\n"
+	"- Pour les questions: si \"champ\" est \"regime_travail_recherche\", mets \"type\": \"choice\" et \"options\": [\"Temps plein\", \"Temps partiel\"]. Si \"champ\" est \"type_contrat_recherche\", mets \"type\": \"choice\" et \"options\" = liste complète ci-dessus. Si \"champ\" est \"code_postal\" ou \"ville\", mets \"type\": \"text\". Pour \"langues\" et \"etudes\", mets \"type\": \"text\" et un \"format_attendu\" explicite (ex: langues: \"francais:C2; anglais:B2\").\n"
+	"- Le JSON doit être directement parsable sans texte autour.\n\nCV:\n{cv_text}"
 )
 
 def build_chain():  # pas d'annotation union pour compat Python 3.9

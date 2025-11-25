@@ -1,7 +1,7 @@
 import requests
 import pandas as pd
 import unicodedata
-from typing import Dict, Any, Iterable, List, Set, Tuple
+from typing import Dict, Any, List, Set, Tuple
 
 
 BASE_URL = "https://www.odwb.be/api/explore/v2.1/catalog/datasets/offres-d-emploi-forem/records"
@@ -164,6 +164,62 @@ def filter_by_regime(df: pd.DataFrame, desired: str | None) -> pd.DataFrame:
     return df[df.apply(ok, axis=1)]
 
 
+def _canon_contrat(value: str) -> str:
+    v = _norm(value)
+    mapping = {
+        "interimaire avec option sur duree indeterminee": "intérimaire avec option sur durée indéterminée",
+        "intérimaire avec option sur durée indeterminee": "intérimaire avec option sur durée indéterminée",
+        "intérimaire avec option sur duree indéterminée": "intérimaire avec option sur durée indéterminée",
+        "intérimaire avec option sur durée indéterminée": "intérimaire avec option sur durée indéterminée",
+        "interimaire": "intérimaire",
+        "intérimaire": "intérimaire",
+        "duree indéterminée": "durée indéterminée",
+        "duree indeterminee": "durée indéterminée",
+        "durée indeterminee": "durée indéterminée",
+        "durée indéterminée": "durée indéterminée",
+        "cdi": "durée indéterminée",
+        "duree déterminée": "durée déterminée",
+        "duree determinee": "durée déterminée",
+        "durée determinee": "durée déterminée",
+        "durée déterminée": "durée déterminée",
+        "cdd": "durée déterminée",
+        "etudiant": "etudiant",
+        "étudiant": "etudiant",
+        "remplacement": "remplacement",
+        "contrat collaboration indépendant": "contrat collaboration indépendant",
+        "contrat collaboration independant": "contrat collaboration indépendant",
+        "freelance": "contrat collaboration indépendant",
+        "indépendant": "contrat collaboration indépendant",
+        "independant": "contrat collaboration indépendant",
+        "flexi-jobs": "flexi-jobs",
+        "flexijobs": "flexi-jobs",
+        "journalier": "journalier (occasionnel ou saisonnier)",
+        "occasionnel": "journalier (occasionnel ou saisonnier)",
+        "saisonnier": "journalier (occasionnel ou saisonnier)",
+        "salarié statutaire": "salarié statutaire",
+        "salarie statutaire": "salarié statutaire",
+        "nettement défini": "nettement défini",
+        "nettement defini": "nettement défini",
+    }
+    return mapping.get(v, v)
+
+
+def filter_by_contrat(df: pd.DataFrame, desired: str | None) -> pd.DataFrame:
+    if not desired:
+        return df
+    target = _canon_contrat(desired)
+    if not target:
+        return df
+
+    def ok(row: pd.Series) -> bool:
+        val = row.get("typecontrat") or row.get("type_contrat")
+        if not isinstance(val, str) or not val:
+            return True  # keep if offer doesn't specify
+        return _canon_contrat(val) == target
+
+    return df[df.apply(ok, axis=1)]
+
+
 def search_offers(profile: Dict[str, Any], limit: int = 200) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """Fetch and filter offers using profile data from CV.py JSON.
 
@@ -176,24 +232,31 @@ def search_offers(profile: Dict[str, Any], limit: int = 200) -> Tuple[pd.DataFra
     applied = []
     df = raw.copy()
 
-    # Apply both filters
+    # Apply all filters: languages, regime, contract
     df_all = filter_by_languages(df, profile)
     df_all = filter_by_regime(df_all, (profile or {}).get("regime_travail_recherche"))
+    df_all = filter_by_contrat(df_all, (profile or {}).get("type_contrat_recherche"))
     if len(df_all) > 0:
-        return df_all, {"applied": ["languages", "regime"], "relaxed": 0, "total": len(raw), "kept": len(df_all)}
+        return df_all, {"applied": ["languages", "regime", "contract"], "relaxed": 0, "total": len(raw), "kept": len(df_all)}
+
+    # Relax: languages + regime (drop contract)
+    df_lang_reg = filter_by_languages(df, profile)
+    df_lang_reg = filter_by_regime(df_lang_reg, (profile or {}).get("regime_travail_recherche"))
+    if len(df_lang_reg) > 0:
+        return df_lang_reg, {"applied": ["languages", "regime"], "relaxed": 1, "total": len(raw), "kept": len(df_lang_reg)}
 
     # Relax: languages only
     df_lang = filter_by_languages(df, profile)
     if len(df_lang) > 0:
-        return df_lang, {"applied": ["languages"], "relaxed": 1, "total": len(raw), "kept": len(df_lang)}
+        return df_lang, {"applied": ["languages"], "relaxed": 2, "total": len(raw), "kept": len(df_lang)}
 
     # Relax: regime only
     df_reg = filter_by_regime(df, (profile or {}).get("regime_travail_recherche"))
     if len(df_reg) > 0:
-        return df_reg, {"applied": ["regime"], "relaxed": 1, "total": len(raw), "kept": len(df_reg)}
+        return df_reg, {"applied": ["regime"], "relaxed": 2, "total": len(raw), "kept": len(df_reg)}
 
     # Final fallback: return recent unfiltered
-    return df, {"applied": [], "relaxed": 2, "total": len(raw), "kept": len(df)}
+    return df, {"applied": [], "relaxed": 3, "total": len(raw), "kept": len(df)}
 
 
 if __name__ == "__main__":
