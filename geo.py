@@ -39,6 +39,9 @@ USER_AGENT = "JobMatcherApp/1.0 (github.com/Prota0202/IA-and-ML-Tinder-like-for-
 # Timeouts for HTTP requests (seconds)
 REQUEST_TIMEOUT = 10
 
+# Nominatim rate limit: 1 request per second (add small buffer)
+NOMINATIM_RATE_LIMIT_SECONDS = 1.1
+
 
 def geocode_google(query: str) -> Optional[Tuple[float, float]]:
     """
@@ -203,7 +206,7 @@ def _get_cached_or_geocode(query: str, cache: dict, use_nominatim_throttle: bool
 
     # Throttle for Nominatim (no Google key)
     if use_nominatim_throttle and not os.getenv("GOOGLE_API_KEY"):
-        time.sleep(1.1)  # Nominatim requires 1 req/sec
+        time.sleep(NOMINATIM_RATE_LIMIT_SECONDS)
 
     # Cache result (None if failed)
     cache[query_key] = list(result) if result else None
@@ -283,8 +286,8 @@ def add_distance_column(
                     val = row[col]
                     # Handle list columns (e.g., lieuxtravaillocalite)
                     if isinstance(val, list):
-                        place_parts.extend([str(v) for v in val if v])
-                    elif pd.notna(val):
+                        place_parts.extend([str(v) for v in val if v is not None and str(v).strip()])
+                    elif pd.notna(val) and str(val).strip():
                         place_parts.append(str(val))
 
             if place_parts:

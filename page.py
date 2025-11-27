@@ -1,5 +1,6 @@
 import os
 import json
+import math
 import tempfile
 from typing import Dict, Any, List
 
@@ -161,7 +162,7 @@ def display_offer(row) -> None:
 	st.write(f"Langues requises: {', '.join(langs) if langs else 'Non spécifiées'}")
 	# Display distance if available
 	dist = row.get("distance_km")
-	if dist is not None and not (isinstance(dist, float) and dist != dist):  # check for NaN
+	if dist is not None and not (isinstance(dist, float) and math.isnan(dist)):
 		st.write(f"Distance: {dist:.1f} km")
 	st.write(f"URL: {row.get('url')}")
 

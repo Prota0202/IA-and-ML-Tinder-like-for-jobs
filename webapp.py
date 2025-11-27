@@ -2,6 +2,7 @@ import os
 import io
 import csv
 import json
+import math
 import secrets
 import tempfile
 from typing import Dict, Any, List
@@ -330,7 +331,7 @@ def offers():
         body += f"<p><strong>Langues:</strong> {', '.join(langs) if langs else 'Non spécifiées'}</p>"
         # Display distance if available
         dist = o.get('distance_km')
-        if dist is not None and not (isinstance(dist, float) and dist != dist):  # check for NaN
+        if dist is not None and not (isinstance(dist, float) and math.isnan(dist)):
             body += f"<p><strong>Distance:</strong> {dist:.1f} km</p>"
         body += f"<p><a target='_blank' href='{o.get('url')}'>Lien offre</a></p>"
         body += "<form method='post'><button name='action' value='accept' class='btn primary'>Accepter</button>"
