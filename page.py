@@ -23,6 +23,7 @@ ZAMZAR_KEY = os.getenv("ZAMZAR_API_KEY")
 # Import local modules
 from CV import read_cv, extract_langues, extract_etudes, extract_localisation, extract_pref_contrat, fuse, find_missing
 from FOREM import search_offers
+from geo import add_distance_column
 
 ALLOWED_CONTRACTS = [
 	"Intérimaire avec option sur durée indéterminée",
@@ -158,6 +159,10 @@ def display_offer(row) -> None:
 	st.write(f"Régime: {row.get('regimetravail')} | Contrat: {row.get('typecontrat')}")
 	langs = row.get("langues") or []
 	st.write(f"Langues requises: {', '.join(langs) if langs else 'Non spécifiées'}")
+	# Display distance if available
+	dist = row.get("distance_km")
+	if dist is not None and not (isinstance(dist, float) and dist != dist):  # check for NaN
+		st.write(f"Distance: {dist:.1f} km")
 	st.write(f"URL: {row.get('url')}")
 
 
@@ -203,6 +208,17 @@ def main():
 		if st.button("Construire profil complet & Rechercher"):
 			st.session_state.profile = updated
 			offers_df, info = search_offers(updated, limit=100)
+			# Build user location string and sort by distance
+			loc = updated.get("localisation") or {}
+			user_loc = loc.get("ville") or ""
+			if loc.get("code_postal"):
+				user_loc = f"{user_loc}, {loc.get('code_postal')}" if user_loc else loc.get("code_postal")
+			if user_loc:
+				offers_df = add_distance_column(
+					offers_df,
+					user_place=user_loc,
+					place_columns=["lieuxtravaillocalite", "lieuxtravailcodepostal"],
+				)
 			st.session_state.offers = offers_df.reset_index(drop=True)
 			st.session_state.search_info = info
 			st.session_state.offer_index = 0
