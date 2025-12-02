@@ -2,6 +2,7 @@ import os
 import io
 import csv
 import json
+import math
 import secrets
 import tempfile
 from typing import Dict, Any, List
@@ -35,6 +36,7 @@ from CV import (
     API_KEY,
 )
 from FOREM import search_offers
+from geo import add_distance_column
 
 ALLOWED_CONTRACTS = [
     "Intérimaire avec option sur durée indéterminée",
@@ -279,6 +281,16 @@ def profile():
         updated["localisation"] = loc
         session["profile_json"] = updated
         offers_df, info = search_offers(updated, limit=100)
+        # Build user location string and sort by distance
+        user_loc = loc.get("ville") or ""
+        if loc.get("code_postal"):
+            user_loc = f"{user_loc}, {loc.get('code_postal')}" if user_loc else loc.get("code_postal")
+        if user_loc:
+            offers_df = add_distance_column(
+                offers_df,
+                user_place=user_loc,
+                place_columns=["lieuxtravaillocalite", "lieuxtravailcodepostal"],
+            )
         if sid:
             STORE_OFFERS[sid] = offers_df.to_dict(orient="records")
             STORE_ACCEPTED[sid] = []
@@ -317,6 +329,10 @@ def offers():
         body += f"<p><strong>Régime:</strong> {o.get('regimetravail')} | <strong>Contrat:</strong> {o.get('typecontrat')}</p>"
         langs = o.get('langues') or []
         body += f"<p><strong>Langues:</strong> {', '.join(langs) if langs else 'Non spécifiées'}</p>"
+        # Display distance if available
+        dist = o.get('distance_km')
+        if dist is not None and not (isinstance(dist, float) and math.isnan(dist)):
+            body += f"<p><strong>Distance:</strong> {dist:.1f} km</p>"
         body += f"<p><a target='_blank' href='{o.get('url')}'>Lien offre</a></p>"
         body += "<form method='post'><button name='action' value='accept' class='btn primary'>Accepter</button>"
         body += "<button name='action' value='reject' class='btn danger'>Refuser</button>"

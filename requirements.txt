@@ -8,3 +8,4 @@ streamlit-swipecards
 zamzar
 PyPDF2
 Flask>=3.0
+requests
