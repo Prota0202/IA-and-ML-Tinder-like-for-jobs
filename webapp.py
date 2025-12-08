@@ -34,6 +34,8 @@ from CV import (
     API_KEY,
 )
 from FOREM import search_offers
+
+# === NEW import: geocoding helper ===
 from geo import add_distance_column
 
 ALLOWED_CONTRACTS = [
@@ -52,9 +54,13 @@ def create_app():
     return app
 
 app = create_app()
-STORE_TEXT = {}
-STORE_OFFERS = {}
-STORE_ACCEPTED = {}
+
+# In-memory store (avoid putting big data in cookie session)
+# NOTE: fine for local dev; for production, use a DB or Flask-Session.
+STORE_TEXT: dict[str, str] = {}
+STORE_OFFERS: dict[str, list[dict]] = {}
+STORE_ACCEPTED: dict[str, list[dict]] = {}
+
 
 @app.before_request
 def ensure_sid():
@@ -126,195 +132,18 @@ def build_profile(cv_text):
     session["llm_questions"] = (llm_json or {}).get("questions") or []
     return fuse(local, llm_json or {})
 
-def html_page(title, body):
-    return f"""<!DOCTYPE html>
-<html lang='fr'>
-<head>
-    <meta charset='utf-8'>
-    <meta name='viewport' content='width=device-width,initial-scale=1'>
-    <title>{title} | JobMatch Pro</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;700&display=swap" rel="stylesheet">
-    <style>
-        body {{
-            font-family: 'Inter', Arial, sans-serif;
-            background: #f6f7fa;
-            margin: 0;
-            color: #232735;
-        }}
-        .navbar {{
-            background: #232735;
-            color: #fff;
-            height: 58px;
-            display: flex;
-            align-items: center;
-            padding: 0 36px;
-            box-shadow: 0 2px 8px #21253c35;
-        }}
-        .navbar-brand {{
-            font-weight: 700;
-            font-size: 1.26em;
-            letter-spacing: .7px;
-            margin-right: 28px;
-        }}
-        .navbar nav {{
-            display: flex;
-            gap: 30px;
-            font-size: 1em;
-        }}
-        .navbar nav a {{
-            color: inherit;
-            text-decoration: none;
-            font-weight: 500;
-            padding: 4px 0;
-            transition:color .15s;
-            border-bottom:2px solid transparent;
-        }}
-        .navbar nav a.active, .navbar nav a:hover {{
-            color: #357EFE;
-            border-bottom: 2px solid #357EFE;
-        }}
-        main {{
-            max-width: 640px;
-            margin: 40px auto;
-            background: #fff;
-            box-shadow: 0 2px 14px rgba(44,54,71,0.08);
-            border-radius: 18px;
-            padding: 44px 36px 28px 36px;
-        }}
-        h1,h2,h3 {{
-            font-weight:700;
-            color:#232735;
-            margin-top:0;
-        }}
-        label {{
-            font-weight:500;
-            margin-top:13px; display:block;
-            color:#42518a;
-        }}
-        input, select, textarea {{
-            width:100%;padding:10px 12px;
-            border-radius:6px;box-sizing:border-box;
-            border:1.3px solid #e4e7f2;
-            background:#f6f7fa;
-            font-size:1.08em;
-            margin:7px 0 16px 0;
-            transition: border .14s;
-        }}
-        input:focus, select:focus, textarea:focus {{
-            border-color: #357EFE;
-            outline: none;
-            background: #eef3fd;
-        }}
-        .btn {{
-            appearance: none;
-            border:none;
-            outline:none;
-            background: #357EFE;
-            color:#fff;
-            font-family:inherit;
-            font-size:1.08em;
-            font-weight:600;
-            padding:11px 34px;
-            border-radius:18px;
-            margin:8px 12px 0 0;
-            cursor:pointer;
-            box-shadow:0 2px 12px #357efe1c;
-            transition:background .15s, box-shadow .14s;
-            letter-spacing:.03em;
-            display:inline-block;
-        }}
-        .btn:hover {{
-            background: #294fb9;
-            box-shadow:0 6px 20px #357efe25;
-        }}
-        .btn.secondary {{
-            background: #e7eaf4;
-            color: #283c66;
-        }}
-        .btn.danger {{
-            background:#e53e3e;color:#fff;
-        }}
-        .section-card {{
-            background:#f9fbfd;border-radius:13px;
-            padding:24px 18px;margin-bottom:26px;
-            box-shadow:0 1px 7px #21253c0d;
-            border:1px solid #eef3fd;
-        }}
-        pre {{
-            background:#f6f7fa;
-            border-radius:9px;
-            padding:12px 13px;
-            font-size:0.97em;
-            box-shadow:0 1px 8px #23273513;
-            border:1px solid #e4e7f2;
-        }}
-        fieldset{{ background:#f7f9fc;border-radius:7px;padding:15px 16px;border:1px solid #e4e7f2;margin-bottom:14px; }}
-        /* Custom input file */
-        .file-upload {{
-            display: flex;
-            align-items: center;
-            gap: 15px;
-            margin-bottom: 15px;
-        }}
-        .file-upload input[type=file] {{
-            display: none;
-        }}
-        .file-upload-label {{
-            background: #357EFE;
-            color: #fff;
-            font-weight: 600;
-            padding: 11px 24px;
-            border-radius: 18px;
-            cursor: pointer;
-            transition: background 0.16s, box-shadow 0.13s;
-            box-shadow: 0 2px 12px #357efe16;
-            border: none;
-            font-size: 1.05em;
-            position: relative;
-        }}
-        .file-upload-label:hover {{
-            background: #294fb9;
-        }}
-        .file-upload-fileinfo {{
-            color: #232735;
-            font-size: 0.99em;
-            background: #eef3fd;
-            padding: 7px 16px;
-            border-radius: 11px;
-            margin-left:2px;
-        }}
-        @media screen and (max-width:600px){{
-            main{{padding:10px 2vw;}}
-            .navbar{{padding:0 13px;}}
-        }}
-    </style>
-    <script>
-    function updateFileName(input) {{
-        var info = document.getElementById('file-upload-fileinfo');
-        if(input.files.length > 0) {{
-            info.textContent = input.files[0].name;
-        }} else {{
-            info.textContent = "Aucun fichier choisi";
-        }}
-    }}
-    </script>
-</head>
-<body>
-    <header class="navbar">
-        <span class="navbar-brand">JobMatch Pro</span>
-        <nav>
-            <a href='{url_for("index")}' {'class="active"' if title=="Accueil" else ''}>Accueil</a>
-            <a href='{url_for("profile")}' {'class="active"' if title=="Profil" else ''}>Profil</a>
-            <a href='{url_for("offers")}' {'class="active"' if title=="Offres" else ''}>Offres</a>
-            <a href='{url_for("accepted")}' {'class="active"' if title=="Acceptées" else ''}>Acceptées</a>
-        </nav>
-    </header>
-    <main>
-    {body}
-    </main>
-</body>
-</html>
-"""
+
+def html_page(title: str, body: str) -> str:
+    return f"""<!DOCTYPE html><html lang='fr'><head><meta charset='utf-8'><title>{title}</title>
+
+<style>body{{font-family:Arial;margin:30px;max-width:900px}}input,select,textarea{{width:100%;margin:4px 0;padding:6px}}.offer{{border:1px solid #ccc;padding:12px;margin-bottom:14px;border-radius:6px}}</style>
+
+</head><body>
+
+<nav><a href='{url_for('index')}'>Accueil</a> <a href='{url_for('profile')}'>Profil</a> <a href='{url_for('offers')}'>Offres</a> <a href='{url_for('accepted')}'>Acceptées</a></nav><hr/>{body}
+
+</body></html>"""
+
 
 @app.route("/", methods=["GET"])
 def index():
@@ -444,6 +273,9 @@ def profile():
         loc["code_postal"] = cp or None
         updated["localisation"] = loc
         session["profile_json"] = updated
+
+        # --- ORIGINAL: offers_df, info = search_offers(updated, limit=100)
+        # --- UPDATED: add distance sorting using geo.add_distance_column
         offers_df, info = search_offers(updated, limit=100)
         user_loc = None
         loc_profile = updated.get("localisation") or {}
@@ -462,7 +294,7 @@ def profile():
         session["offer_index"] = 0
         return redirect(url_for("offers"))
     body = render_profile_form(profile_json)
-    body += "<p><a class='btn secondary' href='/'>Retour Accueil</a></p>"
+    body += "<p><a class='btn neutral' href='/'>&larr; Retour</a></p>"
     return html_page("Profil", body)
 
 @app.route("/offers", methods=["GET", "POST"])

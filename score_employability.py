@@ -27,29 +27,55 @@ def _extract_features_from_cv(cv_text: str) -> Dict[str, float]:
     text = cv_text.lower()
     feats: Dict[str, float] = {}
 
-    # ExperienceYears: look for patterns like "X years", "X ans", "X+ years"
+    # ExperienceYears: detect explicit patterns and French date ranges
     years = []
     for m in re.finditer(r"(\b\d{1,2})\s*(\+)?\s*(years|year|ans|an)\b", text):
         try:
             years.append(int(m.group(1)))
         except Exception:
             pass
-    # Also sum durations from date ranges like 2018-2022
-    ranges = []
-    for m in re.finditer(r"(20\d{2})\s*[-–]\s*(20\d{2})", text):
+    # French month ranges like "Janvier 2022 – Présent" or "Septembre 2020 – Décembre 2021"
+    MONTHS = {
+        'janvier': 1, 'février': 2, 'fevrier': 2, 'mars': 3, 'avril': 4, 'mai': 5, 'juin': 6,
+        'juillet': 7, 'août': 8, 'aout': 8, 'septembre': 9, 'octobre': 10, 'novembre': 11,
+        'décembre': 12, 'decembre': 12
+    }
+    date_pat = re.compile(r"(janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|octobre|novembre|d[ée]cembre)\s+(\d{4})\s*[–-]\s*(janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|octobre|novembre|d[ée]cembre|pr[ée]sent|present)\s*(\d{4})?", re.IGNORECASE)
+    exp_months = 0
+    from datetime import datetime
+    now = datetime.now()
+    for m in date_pat.finditer(text):
+        sm, sy = m.group(1), m.group(2)
+        em, ey = m.group(3), m.group(4)
+        start_mo = MONTHS.get(sm, 1)
+        start_yr = int(sy)
+        if em and ('present' in em or 'présent' in em):
+            end_mo = now.month
+            end_yr = now.year
+        else:
+            end_mo = MONTHS.get(em, start_mo) if em else start_mo
+            end_yr = int(ey) if ey and ey.isdigit() else start_yr
+        months = max(0, (end_yr - start_yr) * 12 + (end_mo - start_mo))
+        exp_months += min(months, 10 * 12)  # cap to 10y per role
+    # Also support simple year ranges like 2018-2022
+    for m in re.finditer(r"(19\d{2}|20\d{2})\s*[-–]\s*(19\d{2}|20\d{2})", text):
         try:
-            ranges.append(int(m.group(2)) - int(m.group(1)))
+            y1, y2 = int(m.group(1)), int(m.group(2))
+            if y2 > y1:
+                exp_months += min((y2 - y1) * 12, 10 * 12)
         except Exception:
             pass
-    exp_years = max(years) if years else (sum(r for r in ranges if r > 0) if ranges else np.nan)
+    exp_years = (exp_months / 12.0) if exp_months > 0 else (max(years) if years else np.nan)
     feats["ExperienceYears"] = float(exp_years) if exp_years is not None else np.nan
 
-    # PreviousCompanies: approximate by counting occurrences of keywords
-    company_patterns = ["company", "entreprise", "employer", "société", "societe", "firm", "startup"]
+    # PreviousCompanies: count role headers or company keywords under experience section
+    company_patterns = ["company", "entreprise", "employeur", "société", "societe", "firm", "startup"]
     companies_est = 0
     for kw in company_patterns:
         companies_est += len(re.findall(rf"\b{kw}\b", text))
-    # Cap to reasonable range
+    # crude role header detection: lines followed by a date
+    role_headers = re.findall(r"\n([a-z][^\n]{0,60})\n(janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|octobre|novembre|d[ée]cembre)\s+\d{4}", text, flags=re.IGNORECASE)
+    companies_est = max(companies_est, len(role_headers))
     feats["PreviousCompanies"] = float(min(companies_est, 10)) if companies_est > 0 else np.nan
 
     # EducationLevel: map keywords to ordinal levels
@@ -77,11 +103,7 @@ def _extract_features_from_cv(cv_text: str) -> Dict[str, float]:
                 break
     feats["Age"] = float(age) if not np.isnan(age) else np.nan
 
-    # Optional numeric features present in tabular dataset; leave NaN so imputer fills median
-    feats["DistanceFromCompany"] = np.nan
-    feats["InterviewScore"] = np.nan
-    feats["SkillScore"] = np.nan
-    feats["PersonalityScore"] = np.nan
+    # Only use core features; avoid optional fields that are usually missing
 
     return feats
 
@@ -125,10 +147,11 @@ def main():
 
     if args.show_features:
         feats_extracted = _extract_features_from_cv(cv_text)
-        vector = {c: feats_extracted.get(c, np.nan) for c in features}
-        print("\nFeature vector (before imputation):")
-        for k, v in vector.items():
-            print(f"- {k}: {v}")
+        # Only show core features to avoid noisy optional fields
+        core_keys = ["Age", "EducationLevel", "ExperienceYears", "PreviousCompanies"]
+        print("\nFeature vector (core, before imputation):")
+        for k in core_keys:
+            print(f"- {k}: {feats_extracted.get(k, np.nan)}")
 
 
 if __name__ == "__main__":

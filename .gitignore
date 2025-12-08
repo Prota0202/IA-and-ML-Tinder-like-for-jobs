@@ -1,2 +1,33 @@
+# Python caches
+__pycache__/
+*.py[cod]
+
+# Virtual environments (local)
+.venv/
+.venv_brew/
+.venv_clean/
+.venv_zamzar/
+.venv_job/
+venv/
+ENV/
+
+# macOS
+.DS_Store
+
+# Node
+node_modules/
+
+# Notebooks checkpoints
+.ipynb_checkpoints/
+
+# Logs
+*.log
+
+# Generated artifacts (adjust as needed)
+cleaned/
+scored_jobs.csv
+models/*.tmp
+models/*.bak
+old_datasets/
 .env
 .venv_zamzar

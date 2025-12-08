@@ -9,10 +9,10 @@ if not api_key:
 
 zamzar = ZamzarClient(api_key)
 
-input_pdf = "resumetest.pdf"      # PDF d'entrée
+input_pdf = "Labos_sécurités___PI2C_championship_vulnerability.pdf"      # PDF d'entrée
 target_format = "txt"             # Format de sortie
 output_folder = "."               # Dossier de sortie (ici: le même dossier)
-output_filename = "resumetest.txt"
+output_filename = "labosecu.txt"
 
 job = zamzar.convert(input_pdf, target_format)
 job.store(output_folder).delete_all_files()
