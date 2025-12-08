@@ -319,7 +319,7 @@ def html_page(title, body):
 @app.route("/", methods=["GET"])
 def index():
     body = """
-    <h1>Assistant Emploi – JobMatch Pro</h1>
+    <h1>The Tinder of LinkedIn</h1>
     <div class="section-card">
       <p>Importez votre CV, puis profitez de la recherche intelligente d’offres.</p>
       <form action='/upload' method='post' enctype='multipart/form-data'>
