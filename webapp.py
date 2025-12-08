@@ -4,6 +4,9 @@ import csv
 import json
 import secrets
 import tempfile
+import joblib
+import numpy as np
+import pandas as pd
 from typing import Dict, Any
 from flask import Flask, request, redirect, url_for, session, make_response
 
@@ -34,9 +37,43 @@ from CV import (
     API_KEY,
 )
 from FOREM import search_offers
-
-# === NEW import: geocoding helper ===
 from geo import add_distance_column
+from feature_engineering import enrich_features
+
+INFERENCE_THRESHOLD = 0.79
+APP_MODEL = joblib.load('models/hire_tabular_core.joblib')
+
+def infer_score(features: dict):
+    cols = APP_MODEL.feature_names_in_ if hasattr(APP_MODEL, "feature_names_in_") else APP_MODEL.get_booster().feature_names
+    row = {k: features.get(k, np.nan) for k in cols}
+    X = enrich_features(pd.DataFrame([row]))
+    X = X.reindex(columns=cols, fill_value=np.nan)
+    proba = float(APP_MODEL.predict_proba(X)[:, 1][0])
+    return proba
+
+def score_llm_profile_offer(profile, offer):
+    import re
+    prompt = (
+        "Profil du candidat:\n" + json.dumps(profile, ensure_ascii=False, indent=2) +
+        "\n\nOffre d'emploi:\n" + json.dumps(offer, ensure_ascii=False, indent=2) +
+        "\n\nQuestion: Donne-moi un score de compatibilité entre 0 et 1 pour ce candidat et cette offre."
+        " 1 signifie une compatibilité parfaite, 0 pas compatible. "
+        " Prends en compte les soft skills, diplômes, expériences, langues et domaine. "
+        "Réponds uniquement par un nombre décimal entre 0 et 1, sans commentaire ni phrase, sur une seule ligne."
+        " Exemple de format attendu : 0.87"
+    )
+    try:
+        response = call_mistral_fallback(prompt)
+        response_text = str(response).strip()
+        print("LLM Response:", response_text)  # DEBUG, voir la réponse brute du modèle
+        # Recherche n'importe quel float
+        find_num = re.findall(r"[0-9]\.\d+", response_text)
+        score = float(find_num[0]) if find_num else 0.0
+        score = max(0.0, min(1.0, score))
+    except Exception as e:
+        print("Erreur scoring LLM:", e)
+        score = 0.0
+    return score
 
 ALLOWED_CONTRACTS = [
     "Intérimaire avec option sur durée indéterminée", "Durée indéterminée",
@@ -54,13 +91,9 @@ def create_app():
     return app
 
 app = create_app()
-
-# In-memory store (avoid putting big data in cookie session)
-# NOTE: fine for local dev; for production, use a DB or Flask-Session.
 STORE_TEXT: dict[str, str] = {}
 STORE_OFFERS: dict[str, list[dict]] = {}
 STORE_ACCEPTED: dict[str, list[dict]] = {}
-
 
 @app.before_request
 def ensure_sid():
@@ -131,7 +164,6 @@ def build_profile(cv_text):
         llm_json = {}
     session["llm_questions"] = (llm_json or {}).get("questions") or []
     return fuse(local, llm_json or {})
-
 
 def html_page(title, body):
     return f"""<!DOCTYPE html>
@@ -256,7 +288,6 @@ def html_page(title, body):
             border:1px solid #e4e7f2;
         }}
         fieldset{{ background:#f7f9fc;border-radius:7px;padding:15px 16px;border:1px solid #e4e7f2;margin-bottom:14px; }}
-        /* Custom input file */
         .file-upload {{
             display: flex;
             align-items: center;
@@ -314,6 +345,7 @@ def html_page(title, body):
             <a href='{url_for("profile")}' {'class="active"' if title=="Profil" else ''}>Profil</a>
             <a href='{url_for("offers")}' {'class="active"' if title=="Offres" else ''}>Offres</a>
             <a href='{url_for("accepted")}' {'class="active"' if title=="Acceptées" else ''}>Acceptées</a>
+            <a href='{url_for("quiz")}' {'class="active"' if title=="Quiz" else ''}>Se tester</a>
         </nav>
     </header>
     <main>
@@ -322,7 +354,6 @@ def html_page(title, body):
 </body>
 </html>
 """
-
 
 @app.route("/", methods=["GET"])
 def index():
@@ -369,8 +400,16 @@ def render_profile_form(profile):
     missing = find_missing(profile) if not questions else []
     def safe(v): return "" if v is None else str(v)
     loc = profile.get("localisation") or {"ville": None, "code_postal": None}
-    html = ["<h2>Profil extrait</h2>"]
-    html.append(f"<pre>{json.dumps(profile, ensure_ascii=False, indent=2)}</pre>")
+    try:
+        proba = infer_score(profile)
+        score_html = f"<div class='section-card' style='margin-bottom:20px;'>Score d'embauche prédit&nbsp;: <b>{proba*100:.1f}%</b></div>"
+    except Exception as e:
+        score_html = f"<div class='section-card' style='color:red;margin-bottom:12px;'>Erreur score modèle: {e}</div>"
+    html = [
+        score_html,
+        "<h2>Profil extrait</h2>",
+        f"<pre>{json.dumps(profile, ensure_ascii=False, indent=2)}</pre>"
+    ]
     html.append("<h3>Compléter les informations manquantes</h3>")
     html.append("<form method='post' action='/profile'>")
     if questions:
@@ -453,8 +492,6 @@ def profile():
         updated["localisation"] = loc
         session["profile_json"] = updated
 
-        # --- ORIGINAL: offers_df, info = search_offers(updated, limit=100)
-        # --- UPDATED: add distance sorting using geo.add_distance_column
         offers_df, info = search_offers(updated, limit=100)
         user_loc = None
         loc_profile = updated.get("localisation") or {}
@@ -466,6 +503,12 @@ def profile():
         try:
             offers_df = add_distance_column(offers_df, user_place=user_loc, place_columns=place_cols)
         except Exception: pass
+
+        # === SCORING LLM POUR CHAQUE OFFRE ===
+        print("Scoring des offres via LLM (peut prendre du temps)...")
+        offers_df["match_score"] = offers_df.apply(lambda row: score_llm_profile_offer(updated, dict(row)), axis=1)
+        offers_df = offers_df.sort_values("match_score", ascending=False)
+
         if sid:
             STORE_OFFERS[sid] = offers_df.to_dict(orient="records")
             STORE_ACCEPTED[sid] = []
@@ -497,6 +540,7 @@ def offers():
     if idx < len(offers):
         o = offers[idx]
         body += f"<div class='section-card'><h3>{o.get('titreoffre')}</h3>"
+        body += f"<p><strong>Score matching LLM:</strong> {o.get('match_score'):.1%}</p>"
         body += f"<p><strong>Employeur:</strong> {o.get('nomemployeur')}</p>"
         body += f"<p><strong>Régime:</strong> {o.get('regimetravail')} | <strong>Contrat:</strong> {o.get('typecontrat')}</p>"
         langs = o.get('langues') or []
@@ -549,6 +593,36 @@ def download_csv():
     resp.headers["Content-Type"] = "text/csv"
     resp.headers["Content-Disposition"] = "attachment; filename=offres_acceptées.csv"
     return resp
+
+@app.route("/quiz", methods=["GET", "POST"])
+def quiz():
+    msg = ""
+    if request.method == "POST":
+        try:
+            features = {}
+            for field in request.form:
+                features[field] = float(request.form[field])
+            proba = infer_score(features)
+            msg = f"<div class='section-card'>Votre score prédit d'embauche : <b>{100*proba:.1f}%</b></div>"
+        except Exception as e:
+            msg = f"<div class='section-card' style='color:red;'>Erreur : {e}</div>"
+    body = """
+        <h1>🎯 Simulation d'embauche (sans CV)</h1>
+        <div class="section-card">
+            <form method="post">
+                <label>PreviousCompanies</label>
+                <input type="number" step="1" name="PreviousCompanies" required>
+                <label>ExperienceYears</label>
+                <input type="number" step="0.1" name="ExperienceYears" required>
+                <label>EducationLevel (1=Bac, 2=Bac+3, 3=Master, 4=PhD)</label>
+                <input type="number" step="1" name="EducationLevel" required>
+                <label>Age</label>
+                <input type="number" step="1" name="Age" required>
+                <button class="btn" type="submit">Voir mon score</button>
+            </form>
+        </div>
+    """ + msg
+    return html_page("Quiz", body)
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
