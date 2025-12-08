@@ -37,6 +37,14 @@ from CV import (
     API_KEY,
 )
 from FOREM import search_offers
+try:
+    import joblib  # type: ignore
+except Exception:
+    joblib = None  # type: ignore
+import numpy as np
+import pandas as pd
+import re
+from datetime import datetime
 
 # === NEW import: geocoding helper ===
 from geo import add_distance_column
@@ -71,6 +79,8 @@ app = create_app()
 STORE_TEXT: dict[str, str] = {}
 STORE_OFFERS: dict[str, list[dict]] = {}
 STORE_ACCEPTED: dict[str, list[dict]] = {}
+EMPLOYABILITY_MODEL_PATH = os.getenv("EMPLOYABILITY_MODEL", os.path.join(os.path.dirname(__file__), "models", "hire_tabular_nocal.joblib"))
+EMPLOYABILITY_MODEL_PATH_CORE = os.getenv("EMPLOYABILITY_MODEL_CORE", os.path.join(os.path.dirname(__file__), "models", "hire_tabular_core.joblib"))
 
 
 @app.before_request
@@ -166,6 +176,130 @@ def build_profile(cv_text: str) -> Dict[str, Any]:
     # store questions aside in session
     session["llm_questions"] = (llm_json or {}).get("questions") or []
     return fuse(local, llm_json or {})
+
+
+def _edu_level_from_etudes(etudes: list[dict] | None) -> int:
+    if not etudes:
+        return 0
+    text = " ".join([str(e.get("diplome", "")) for e in etudes]).lower()
+    if any(k in text for k in ["phd", "doctorat", "doctorate"]):
+        return 4
+    if any(k in text for k in ["master", "msc", "maitrise"]):
+        return 3
+    if any(k in text for k in ["bachelor", "licence", "bsc", "ba"]):
+        return 2
+    if any(k in text for k in ["diplome", "certificat", "certification"]):
+        return 1
+    return 0
+
+
+def extract_tabular_features(profile: Dict[str, Any]) -> dict:
+    etudes = profile.get("etudes") or []
+    edu_level = _edu_level_from_etudes(etudes)
+    # Heuristics: count previous companies via experiences list if provided by LLM; else 0
+    prev_companies = 0
+    for k in ("experiences", "experience", "jobs", "entreprises"):
+        arr = profile.get(k) or []
+        if isinstance(arr, list):
+            prev_companies = max(prev_companies, len(arr))
+    # Experience years if present in profile
+    exp_years = 0
+    for k in ("experience_years", "annees_experience", "exp_years"):
+        v = profile.get(k)
+        try:
+            if v is not None:
+                exp_years = max(exp_years, int(v))
+        except Exception:
+            pass
+    # Fallback: derive years from raw CV text (French date ranges)
+    if not exp_years:
+        try:
+            sid = session.get("sid")
+            raw = STORE_TEXT.get(sid or "") or ""
+            t = raw.lower()
+            MONTHS = {
+                'janvier': 1, 'février': 2, 'fevrier': 2, 'mars': 3, 'avril': 4, 'mai': 5, 'juin': 6,
+                'juillet': 7, 'août': 8, 'aout': 8, 'septembre': 9, 'octobre': 10, 'novembre': 11,
+                'décembre': 12, 'decembre': 12
+            }
+            date_pat = re.compile(r"(janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|octobre|novembre|d[ée]cembre)\s+(\d{4})\s*[–-]\s*(janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|octobre|novembre|d[ée]cembre|pr[ée]sent|present)\s*(\d{4})?", re.IGNORECASE)
+            exp_months = 0
+            now = datetime.now()
+            for m in date_pat.finditer(t):
+                sm, sy = m.group(1), m.group(2)
+                em, ey = m.group(3), m.group(4)
+                start_mo = MONTHS.get(sm, 1)
+                start_yr = int(sy)
+                if em and ('present' in em or 'présent' in em):
+                    end_mo = now.month
+                    end_yr = now.year
+                else:
+                    end_mo = MONTHS.get(em, start_mo) if em else start_mo
+                    end_yr = int(ey) if ey and ey.isdigit() else start_yr
+                months = max(0, (end_yr - start_yr) * 12 + (end_mo - start_mo))
+                exp_months += min(months, 10 * 12)
+            # simple year spans
+            for m in re.finditer(r"(19\d{2}|20\d{2})\s*[–-]\s*(19\d{2}|20\d{2})", t):
+                try:
+                    y1, y2 = int(m.group(1)), int(m.group(2))
+                    if y2 > y1:
+                        exp_months += min((y2 - y1) * 12, 10 * 12)
+                except Exception:
+                    pass
+            exp_years = int(round(exp_months / 12.0)) if exp_months > 0 else exp_years
+        except Exception:
+            pass
+    # Age if present
+    age = profile.get("age")
+    try:
+        age = int(age) if age is not None else np.nan
+    except Exception:
+        age = np.nan
+    # Fallback for previous companies via role headers in raw text
+    if prev_companies == 0:
+        try:
+            sid = session.get("sid")
+            t = (STORE_TEXT.get(sid or "") or "").lower()
+            role_headers = re.findall(r"\n([a-z][^\n]{0,60})\n(janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|octobre|novembre|d[ée]cembre)\s+\d{4}", t, flags=re.IGNORECASE)
+            prev_companies = max(prev_companies, len(role_headers))
+        except Exception:
+            pass
+    return {
+        "ExperienceYears": exp_years,
+        "PreviousCompanies": prev_companies,
+        "EducationLevel": edu_level,
+        "Age": age,
+    }
+
+
+def score_employability(profile: Dict[str, Any]) -> float | None:
+    try:
+        if joblib is None:
+            return None
+        # Prefer core-features model if available
+        model_path = EMPLOYABILITY_MODEL_PATH_CORE if os.path.exists(EMPLOYABILITY_MODEL_PATH_CORE) else EMPLOYABILITY_MODEL_PATH
+        if not os.path.exists(model_path):
+            return None
+        bundle = joblib.load(model_path)
+        pipeline = bundle.get("pipeline", bundle.get("model", bundle)) if isinstance(bundle, dict) else bundle
+        features = bundle.get("features") if isinstance(bundle, dict) else None
+        feats = extract_tabular_features(profile)
+        # Restrict to core features only
+        core_keys = ["ExperienceYears", "PreviousCompanies", "EducationLevel", "Age"]
+        if features:
+            row = {name: (feats.get(name, np.nan) if name in core_keys else np.nan) for name in features}
+        else:
+            row = {k: feats.get(k, np.nan) for k in core_keys}
+        X = pd.DataFrame([row])
+        if hasattr(pipeline, "predict_proba"):
+            return float(pipeline.predict_proba(X)[:, 1][0])
+        if hasattr(pipeline, "decision_function"):
+            val = float(pipeline.decision_function(X)[0])
+            return 1.0 / (1.0 + np.exp(-val))
+        pred = int(pipeline.predict(X)[0])
+        return float(pred)
+    except Exception:
+        return None
 
 
 def html_page(title: str, body: str) -> str:
@@ -326,9 +460,14 @@ def profile():
         loc["code_postal"] = cp or None
         updated["localisation"] = loc
         session["profile_json"] = updated
+<<<<<<< Updated upstream
 
         # --- ORIGINAL: offers_df, info = search_offers(updated, limit=100)
         # --- UPDATED: add distance sorting using geo.add_distance_column
+=======
+        # compute employability after updates
+        session["employability_prob"] = score_employability(updated)
+>>>>>>> Stashed changes
         offers_df, info = search_offers(updated, limit=100)
 
         # Build user location string from profile localisation
@@ -355,7 +494,14 @@ def profile():
         session["offers_info"] = info
         session["offer_index"] = 0
         return redirect(url_for("offers"))
-    body = render_profile_form(profile_json)
+    # compute employability on initial render
+    session["employability_prob"] = session.get("employability_prob") or score_employability(profile_json)
+    body = ""
+    prob = session.get("employability_prob")
+    if prob is not None:
+        pct = f"{prob*100:.1f}%"
+        body += f"<div class='offer' style='background:#f8fafc'><strong>Employabilité estimée:</strong> {pct}</div>"
+    body += render_profile_form(profile_json)
     body += "<p><a class='btn neutral' href='/'>&larr; Retour</a></p>"
     return html_page("Profil", body)
 
