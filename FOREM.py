@@ -1,7 +1,7 @@
 import requests
 import pandas as pd
 import unicodedata
-from typing import Dict, Any, List, Set, Tuple
+from typing import Dict, Any, List, Set, Tuple, Optional
 
 
 BASE_URL = "https://www.odwb.be/api/explore/v2.1/catalog/datasets/offres-d-emploi-forem/records"
@@ -138,7 +138,7 @@ def _canon_regime(value: str) -> str:
     return v
 
 
-def filter_by_regime(df: pd.DataFrame, desired: str | None) -> pd.DataFrame:
+def filter_by_regime(df: pd.DataFrame, desired: Optional[str]) -> pd.DataFrame:
     """Filter by working time regime if desired is provided.
     - desired "temps plein" -> keep offers whose regimetravail is Temps plein
     - desired "temps partiel" or mi-temps -> keep Temps partiel
@@ -204,7 +204,7 @@ def _canon_contrat(value: str) -> str:
     return mapping.get(v, v)
 
 
-def filter_by_contrat(df: pd.DataFrame, desired: str | None) -> pd.DataFrame:
+def filter_by_contrat(df: pd.DataFrame, desired: Optional[str]) -> pd.DataFrame:
     if not desired:
         return df
     target = _canon_contrat(desired)

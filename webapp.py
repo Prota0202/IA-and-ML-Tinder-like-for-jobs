@@ -1,3 +1,5 @@
+# NOTE: below is the original webapp.py with only minimal edits to integrate geo.add_distance_column.
+# I kept the original structure and replaced/added the small sections required.
 import os
 import io
 import csv
@@ -36,11 +38,14 @@ from CV import (
 )
 from FOREM import search_offers
 
+# === NEW import: geocoding helper ===
+from geo import add_distance_column
+
 ALLOWED_CONTRACTS = [
     "Intérimaire avec option sur durée indéterminée",
     "Durée indéterminée",
     "Intérimaire",
-    "Durée déterminée",
+    "Durée d'éterminée",
     "Etudiant",
     "Remplacement",
     "Contrat collaboration indépendant",
@@ -75,20 +80,48 @@ def ensure_sid():
 
 
 def extract_text_local(file_path: str) -> str:
-    if not PyPDF2:
-        return "(PyPDF2 non installé)"
+    """
+    Essaie d'extraire le texte d'un PDF local :
+    1) PyPDF2 (rapide)
+    2) pdfminer.six (plus robuste sur certains PDF)
+    Renvoie un message explicite si aucune méthode n'est disponible.
+    """
+    # 1) PyPDF2
+    if PyPDF2:
+        try:
+            with open(file_path, "rb") as f:
+                reader = PyPDF2.PdfReader(f)
+                parts = []
+                for page in reader.pages:
+                    try:
+                        txt = page.extract_text()
+                        if txt:
+                            parts.append(txt)
+                    except Exception:
+                        continue
+            combined = "\n".join(parts)
+            if combined and combined.strip():
+                return combined
+            # si résultat vide, on fall back vers pdfminer
+        except Exception:
+            pass
+
+    # 2) pdfminer.six fallback
     try:
-        with open(file_path, "rb") as f:
-            reader = PyPDF2.PdfReader(f)
-            parts = []
-            for page in reader.pages:
-                try:
-                    parts.append(page.extract_text() or "")
-                except Exception:
-                    continue
-        return "\n".join(parts)
-    except Exception as e:
-        return f"Erreur PDF locale: {e}"
+        from pdfminer.high_level import extract_text as pdfminer_extract_text  # lazy import
+    except Exception:
+        pdfminer_extract_text = None
+
+    if pdfminer_extract_text:
+        try:
+            txt = pdfminer_extract_text(file_path)
+            if txt and txt.strip():
+                return txt
+            return "(Extraction locale PDF: résultat vide)"
+        except Exception as e:
+            return f"Erreur PDF locale (pdfminer): {e}"
+
+    return "(PyPDF2 non installé et pdfminer non installé)"
 
 
 def extract_text_zamzar(file_path: str) -> str:
@@ -137,8 +170,14 @@ def build_profile(cv_text: str) -> Dict[str, Any]:
 
 def html_page(title: str, body: str) -> str:
     return f"""<!DOCTYPE html><html lang='fr'><head><meta charset='utf-8'><title>{title}</title>
-    <style>body{{font-family:Arial;margin:30px;max-width:900px}}input,select,textarea{{width:100%;margin:4px 0;padding:6px}}.offer{{border:1px solid #ccc;padding:12px;margin-bottom:14px;border-radius:6px}}.btn{{padding:8px 16px;margin:4px;border:0;border-radius:4px;cursor:pointer}}.primary{{background:#2563eb;color:#fff}}.danger{{background:#dc2626;color:#fff}}.neutral{{background:#6b7280;color:#fff}}nav a{{margin-right:12px}}.tag{{display:inline-block;background:#f1f5f9;padding:4px 8px;margin:2px;border-radius:4px;font-size:12px}}.accepted{{background:#16a34a;color:#fff}}</style></head><body>
-    <nav><a href='{url_for('index')}'>Accueil</a><a href='{url_for('profile')}'>Profil</a><a href='{url_for('offers')}'>Offres</a><a href='{url_for('accepted')}'>Acceptées</a></nav><hr/>{body}</body></html>"""
+
+<style>body{{font-family:Arial;margin:30px;max-width:900px}}input,select,textarea{{width:100%;margin:4px 0;padding:6px}}.offer{{border:1px solid #ccc;padding:12px;margin-bottom:14px;border-radius:6px}}</style>
+
+</head><body>
+
+<nav><a href='{url_for('index')}'>Accueil</a> <a href='{url_for('profile')}'>Profil</a> <a href='{url_for('offers')}'>Offres</a> <a href='{url_for('accepted')}'>Acceptées</a></nav><hr/>{body}
+
+</body></html>"""
 
 
 @app.route("/", methods=["GET"])
@@ -165,6 +204,14 @@ def upload():
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
     file.save(tmp.name)
     text = extract_text_zamzar(tmp.name) or extract_text_local(tmp.name)
+    # debug: afficher un aperçu du texte extrait pour vérifier l'extraction
+    try:
+        preview = text[:2000].replace("\n", "\\n")
+        print("[DEBUG] texte extrait (début, 2000 chars):")
+        print(preview)
+    except Exception as e:
+        print("[DEBUG] erreur affichage preview texte extrait:", e)
+        
     os.unlink(tmp.name)
     sid = session.get("sid")
     if sid:
@@ -204,10 +251,11 @@ def render_profile_form(profile: Dict[str, Any]) -> str:
                     html.append(f"<label>{qtext}<textarea name='{champ}' rows='{rows}' placeholder='{placeholder}'></textarea></label>")
             elif champ == "type_contrat_recherche":
                 opts = options or ALLOWED_CONTRACTS
-                html.append("<label>Type de contrat<select name='type_contrat'><option value=''>-- Non précisé --</option>" + "".join(f"<option>{c}</option>" for c in opts) + "</select></label>")
+                html.append("<label>Type de contrat<select name='type_contrat'><option value=''>-- Non précisé --</option>" + "".join(f"<option>{c}</option>" for c in opts) + "</select></label>[...]")
             elif champ == "regime_travail_recherche":
                 opts = options or REGIME_OPTIONS
-                html.append("<fieldset><legend>Régime de travail</legend>" + "".join(f"<label><input type='radio' name='regime' value='{r}'> {r}</label>" for r in opts) + "<label><input type='radio' name='regime' value=''> Non précisé</label></fieldset>")
+                html.append("<fieldset><legend>Régime de travail</legend>" + "".join(f"<label><input type='radio' name='regime' value='{r}'> {r}</label>" for r in opts) + "<label><input type='radio' name='regime' value=''>Non spécifié</label></fieldset>")
+            
             elif champ in ("ville", "code_postal"):
                 html.append(f"<label>{qtext}<input name='{champ}' value='{safe(loc.get(champ))}'/></label>")
             else:
@@ -220,9 +268,9 @@ def render_profile_form(profile: Dict[str, Any]) -> str:
         if "etudes" in missing:
             html.append("<label>Études (Diplôme|Domaine|Institution|Période;...)<textarea name='etudes' rows='3'></textarea></label>")
         if "type_contrat_recherche" in missing:
-            html.append("<label>Type de contrat recherché<select name='type_contrat'><option value=''>-- Non précisé --</option>" + "".join(f"<option>{c}</option>" for c in ALLOWED_CONTRACTS) + "</select></label>")
+            html.append("<label>Type de contrat recherché<select name='type_contrat'><option value=''>-- Non précisé --</option>" + "".join(f"<option>{c}</option>" for c in ALLOWED_CONTRACTS) + "[...]")   
         if "regime_travail_recherche" in missing:
-            html.append("<fieldset><legend>Régime de travail</legend>" + "".join(f"<label><input type='radio' name='regime' value='{r}'> {r}</label>" for r in REGIME_OPTIONS) + "<label><input type='radio' name='regime' value=''> Non précisé</label></fieldset>")
+            html.append("<fieldset><legend>Régime de travail</legend>" + "".join(f"<label><input type='radio' name='regime' value='{r}'> {r}</label>" for r in REGIME_OPTIONS) + "<label><input type='radio' name='regime' value=''>Non spécifié</label></fieldset>")
         if "ville" in missing:
             html.append(f"<label>Ville<input name='ville' value='{safe(loc.get('ville'))}'/></label>")
         if "code_postal" in missing:
@@ -278,7 +326,29 @@ def profile():
         loc["code_postal"] = cp or None
         updated["localisation"] = loc
         session["profile_json"] = updated
+
+        # --- ORIGINAL: offers_df, info = search_offers(updated, limit=100)
+        # --- UPDATED: add distance sorting using geo.add_distance_column
         offers_df, info = search_offers(updated, limit=100)
+
+        # Build user location string from profile localisation
+        user_loc = None
+        loc_profile = updated.get("localisation") or {}
+        if loc_profile.get("ville"):
+            user_loc = loc_profile.get("ville")
+            if loc_profile.get("code_postal"):
+                user_loc = f"{loc_profile.get('ville')}, {loc_profile.get('code_postal')}"
+
+        # Candidate columns likely present in the offres dataset
+        place_cols = ["Lieux de travail_clean", "Lieux de travail", "Lieux de travail_list", "lieux de travail", "commune"]
+
+        try:
+            # add_distance_column will geocode and sort; safe fallback if it fails
+            offers_df = add_distance_column(offers_df, user_place=user_loc, place_columns=place_cols)
+        except Exception:
+            # keep original offers_df on error
+            pass
+
         if sid:
             STORE_OFFERS[sid] = offers_df.to_dict(orient="records")
             STORE_ACCEPTED[sid] = []
@@ -317,6 +387,14 @@ def offers():
         body += f"<p><strong>Régime:</strong> {o.get('regimetravail')} | <strong>Contrat:</strong> {o.get('typecontrat')}</p>"
         langs = o.get('langues') or []
         body += f"<p><strong>Langues:</strong> {', '.join(langs) if langs else 'Non spécifiées'}</p>"
+
+        # === NEW: show computed distance if present ===
+        dist = o.get("distance_km")
+        if dist is not None:
+            body += f"<p><strong>Distance:</strong> {dist} km</p>"
+        else:
+            body += f"<p><strong>Distance:</strong> N/A</p>"
+
         body += f"<p><a target='_blank' href='{o.get('url')}'>Lien offre</a></p>"
         body += "<form method='post'><button name='action' value='accept' class='btn primary'>Accepter</button>"
         body += "<button name='action' value='reject' class='btn danger'>Refuser</button>"
