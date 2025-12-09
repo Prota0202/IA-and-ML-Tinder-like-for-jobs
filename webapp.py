@@ -25,6 +25,32 @@ from dotenv import load_dotenv
 load_dotenv()
 ZAMZAR_KEY = os.getenv("ZAMZAR_API_KEY")
 
+# === Debug LLM ===
+LLM_DEBUG = os.getenv("LLM_DEBUG", "0") == "1"
+try:
+    from langchain_core.callbacks import BaseCallbackHandler
+except Exception:
+    BaseCallbackHandler = None
+
+class LLMLogger(BaseCallbackHandler):
+    def on_llm_start(self, serialized, prompts, **kwargs):
+        if LLM_DEBUG:
+            print("[LLM DEBUG] === Prompt envoyé à Mistral ===")
+            if prompts:
+                p = prompts[0]
+                print(p if len(p) < 12000 else p[:12000] + "\n...[truncated]...")
+
+    def on_llm_end(self, response, **kwargs):
+        if LLM_DEBUG:
+            print("[LLM DEBUG] === Réponse Mistral (analyse CV) ===")
+            try:
+                gen = response.generations[0][0]
+                content = getattr(gen, "text", None) or getattr(getattr(gen, "message", None), "content", "")
+            except Exception:
+                content = str(response)
+            print(content if len(content) < 12000 else content[:12000] + "\n...[truncated]...")
+
+
 from CV import (
     extract_langues,
     extract_etudes,
@@ -170,10 +196,30 @@ def build_profile(cv_text):
     try:
         if API_KEY:
             chain = build_chain()
-            raw = chain.run({"cv_text": cv_text}) if chain else call_mistral_fallback(cv_text)
-            llm_json = safe_json_extract(raw)
+            if chain:
+                # Utilise un callback pour afficher le prompt exact et la réponse
+                if BaseCallbackHandler and LLM_DEBUG:
+                    raw = chain.invoke({"cv_text": cv_text}, config={"callbacks": [LLMLogger()]})
+                else:
+                    raw = chain.run({"cv_text": cv_text})
+            else:
+                raw = call_mistral_fallback(cv_text)
+        else:
+            raw = call_mistral_fallback(cv_text)
+
+        if LLM_DEBUG:
+            print("[LLM DEBUG] === Sortie brute LLM ===")
+            print(str(raw)[:12000])
+
+        llm_json = safe_json_extract(raw)
+
+        if LLM_DEBUG:
+            print("[LLM DEBUG] === JSON extrait du CV ===")
+            print(json.dumps(llm_json, ensure_ascii=False, indent=2)[:12000])
+
     except Exception:
         llm_json = {}
+
     session["llm_questions"] = (llm_json or {}).get("questions") or []
     return fuse(local, llm_json or {})
 
@@ -394,18 +440,29 @@ def upload():
     if not file:
         return redirect(url_for("index"))
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-    file.save(tmp.name)
-    text = extract_text_zamzar(tmp.name) or extract_text_local(tmp.name)
-    os.unlink(tmp.name)
-    sid = session.get("sid")
-    if sid:
-        STORE_TEXT[sid] = text[:200000]
-        STORE_OFFERS.pop(sid, None)
-        STORE_ACCEPTED.pop(sid, None)
-    session.pop("profile_json", None)
-    session.pop("offers_info", None)
-    session.pop("offer_index", None)
-    return redirect(url_for("profile"))
+    try:
+        file.save(tmp.name)
+        # Close the handle before any reader/converter uses the file (Windows requirement)
+        tmp.close()
+
+        # Prefer Zamzar if configured, else local extraction
+        text = extract_text_zamzar(tmp.name) or extract_text_local(tmp.name)
+
+        sid = session.get("sid")
+        if sid:
+            STORE_TEXT[sid] = (text or "")[:200000]
+            STORE_OFFERS.pop(sid, None)
+            STORE_ACCEPTED.pop(sid, None)
+        session.pop("profile_json", None)
+        session.pop("offers_info", None)
+        session.pop("offer_index", None)
+        return redirect(url_for("profile"))
+    finally:
+        # Best-effort cleanup (ignore if another process still holds it)
+        try:
+            os.unlink(tmp.name)
+        except Exception:
+            pass
 
 def render_profile_form(profile):
     questions = session.get("llm_questions") or []
