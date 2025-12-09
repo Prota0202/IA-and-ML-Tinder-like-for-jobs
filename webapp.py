@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 from typing import Dict, Any
 from flask import Flask, request, redirect, url_for, session, make_response
+import requests
 
 try:
     import PyPDF2
@@ -54,25 +55,36 @@ def infer_score(features: dict):
 def score_llm_profile_offer(profile, offer):
     import re
     prompt = (
-        "Profil du candidat:\n" + json.dumps(profile, ensure_ascii=False, indent=2) +
-        "\n\nOffre d'emploi:\n" + json.dumps(offer, ensure_ascii=False, indent=2) +
-        "\n\nQuestion: Donne-moi un score de compatibilité entre 0 et 1 pour ce candidat et cette offre."
-        " 1 signifie une compatibilité parfaite, 0 pas compatible. "
-        " Prends en compte les soft skills, diplômes, expériences, langues et domaine. "
-        "Réponds uniquement par un nombre décimal entre 0 et 1, sans commentaire ni phrase, sur une seule ligne."
-        " Exemple de format attendu : 0.87"
+        "Voici un profil de candidat:\n" + json.dumps(profile, ensure_ascii=False, indent=2) +
+        "\n\nVoici une offre d'emploi:\n" + json.dumps(offer, ensure_ascii=False, indent=2) +
+        "\n\nSur une échelle de 0 à 1, quel est le score de compatibilité entre ce candidat et cette offre ? "
+        "Le score doit refléter la pertinence réelle et permettre de trier les offres. "
+        "Réponds uniquement par UN NOMBRE décimal entre 0 et 1, sans commentaire ni phrase. Exemple : 0.72"
     )
     try:
         response = call_mistral_fallback(prompt)
         response_text = str(response).strip()
-        print("LLM Response:", response_text)  # DEBUG, voir la réponse brute du modèle
-        # Recherche n'importe quel float
-        find_num = re.findall(r"[0-9]\.\d+", response_text)
-        score = float(find_num[0]) if find_num else 0.0
+        # === PRINT DE DEBUG IMPORTANT !
+        print("=== LLM Response reçu pour le score :", repr(response_text))
+        find_num = re.findall(r"\d+\.\d+|\d+", response_text)
+        print("Numbers found:", find_num)
+        score = 0.0
+        scores = []
+        for val in find_num:
+            v = float(val)
+            if 0.0 < v < 1.0:
+                scores.append(v)
+        if scores:
+            score = scores[0]
+        elif find_num:
+            v = float(find_num[0])
+            if v == 1.0 or v == 0.0:
+                score = v
         score = max(0.0, min(1.0, score))
     except Exception as e:
         print("Erreur scoring LLM:", e)
         score = 0.0
+    print("Final score:", score)
     return score
 
 ALLOWED_CONTRACTS = [
