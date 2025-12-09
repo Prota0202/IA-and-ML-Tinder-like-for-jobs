@@ -197,7 +197,6 @@ def build_profile(cv_text):
         if API_KEY:
             chain = build_chain()
             if chain:
-                # Utilise un callback pour afficher le prompt exact et la réponse
                 if BaseCallbackHandler and LLM_DEBUG:
                     raw = chain.invoke({"cv_text": cv_text}, config={"callbacks": [LLMLogger()]})
                 else:
@@ -213,15 +212,73 @@ def build_profile(cv_text):
 
         llm_json = safe_json_extract(raw)
 
+        # Sécuriser les 4 features avec defaults
+        import math
+        def as_num0(v): 
+            try:
+                if isinstance(v, bool): return 0
+                if v is None: return 0
+                return float(v)
+            except Exception:
+                return 0
+        def as_nan(v):
+            try:
+                if isinstance(v, bool): return math.nan
+                if v is None: return math.nan
+                return float(v)
+            except Exception:
+                return math.nan
+
+        llm_json["PreviousCompanies"] = as_num0(llm_json.get("PreviousCompanies"))
+        llm_json["ExperienceYears"]   = as_num0(llm_json.get("ExperienceYears"))
+        llm_json["EducationLevel"]    = as_num0(llm_json.get("EducationLevel"))
+        llm_json["Age"]               = as_nan(llm_json.get("Age"))
+
         if LLM_DEBUG:
-            print("[LLM DEBUG] === JSON extrait du CV ===")
-            print(json.dumps(llm_json, ensure_ascii=False, indent=2)[:12000])
+            print("[LLM DEBUG] === JSON LLM (features ML) ===")
+            print(json.dumps({k: llm_json.get(k) for k in ["PreviousCompanies","ExperienceYears","EducationLevel","Age"]}, ensure_ascii=False, indent=2))
 
     except Exception:
         llm_json = {}
 
-    session["llm_questions"] = (llm_json or {}).get("questions") or []
-    return fuse(local, llm_json or {})
+    # Avant fusion: log
+    if LLM_DEBUG:
+        print("[FUSE DEBUG] Avant fusion -> local:", {k: local.get(k) for k in ["PreviousCompanies","ExperienceYears","EducationLevel","Age"]})
+        print("[FUSE DEBUG] Avant fusion -> llm_json:", {k: llm_json.get(k) for k in ["PreviousCompanies","ExperienceYears","EducationLevel","Age"]})
+
+    fused = fuse(local, llm_json or {})
+
+    # Après fusion: forcer que les 4 features gardent la valeur LLM (si dispo)
+    for key in ["PreviousCompanies","ExperienceYears","EducationLevel","Age"]:
+        if key in llm_json and llm_json[key] is not None:
+            fused[key] = llm_json[key]
+
+    # Cast final pour éviter strings
+    import math
+    def to_float_or(v, default):
+        try:
+            if isinstance(v, bool): return default
+            return float(v)
+        except Exception:
+            return default
+    fused["PreviousCompanies"] = to_float_or(fused.get("PreviousCompanies"), 0.0)
+    fused["ExperienceYears"]   = to_float_or(fused.get("ExperienceYears"), 0.0)
+    fused["EducationLevel"]    = to_float_or(fused.get("EducationLevel"), 0.0)
+    # Age: autorise NaN si inconnu
+    fused["Age"]               = to_float_or(fused.get("Age"), math.nan)
+
+    # Debug: montrer les features envoyées au modèle
+    try:
+        print("[ML DEBUG] Features pour le modèle (après fusion):", {
+            "PreviousCompanies": fused.get("PreviousCompanies"),
+            "ExperienceYears": fused.get("ExperienceYears"),
+            "EducationLevel": fused.get("EducationLevel"),
+            "Age": fused.get("Age"),
+        })
+    except Exception:
+        pass
+
+    return fused
 
 def html_page(title, body):
     return f"""<!DOCTYPE html>
@@ -471,7 +528,7 @@ def render_profile_form(profile):
     loc = profile.get("localisation") or {"ville": None, "code_postal": None}
     try:
         proba = infer_score(profile)
-        score_html = f"<div class='section-card' style='margin-bottom:20px;'>Score d'embauche prédit&nbsp;: <b>{proba*100:.1f}%</b></div>"
+        score_html = f"<div class='section-card' style='margin-bottom:20px;'>Score d'employabilité prédit&nbsp;: <b>{proba*100:.1f}%</b></div>"
     except Exception as e:
         score_html = f"<div class='section-card' style='color:red;margin-bottom:12px;'>Erreur score modèle: {e}</div>"
     html = [
