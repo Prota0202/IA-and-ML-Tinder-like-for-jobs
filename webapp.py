@@ -57,35 +57,25 @@ def score_llm_profile_offer(profile, offer):
     prompt = (
         "Voici un profil de candidat:\n" + json.dumps(profile, ensure_ascii=False, indent=2) +
         "\n\nVoici une offre d'emploi:\n" + json.dumps(offer, ensure_ascii=False, indent=2) +
-        "\n\nSur une échelle de 0 à 1, quel est le score de compatibilité entre ce candidat et cette offre ? "
-        "Le score doit refléter la pertinence réelle et permettre de trier les offres. "
-        "Réponds uniquement par UN NOMBRE décimal entre 0 et 1, sans commentaire ni phrase. Exemple : 0.72"
+        "\n\nQUESTION: Sur une échelle de 0 à 1, donne un score de compatibilité entre ce profil et cette offre.\n"
+        "LE SCORE DOIT ÊTRE UNIQUE, DÉCIMAL, ENTRE 0 ET 1, SANS AUCUNE AUTRE INFORMATION, NI JSON, NI TEXTE, NI COMMENTAIRE, JUSTE UN FLOAT SUR UNE LIGNE !"
     )
     try:
         response = call_mistral_fallback(prompt)
         response_text = str(response).strip()
-        # === PRINT DE DEBUG IMPORTANT !
         print("=== LLM Response reçu pour le score :", repr(response_text))
-        find_num = re.findall(r"\d+\.\d+|\d+", response_text)
-        print("Numbers found:", find_num)
-        score = 0.0
-        scores = []
-        for val in find_num:
-            v = float(val)
-            if 0.0 < v < 1.0:
-                scores.append(v)
-        if scores:
-            score = scores[0]
-        elif find_num:
-            v = float(find_num[0])
-            if v == 1.0 or v == 0.0:
-                score = v
-        score = max(0.0, min(1.0, score))
+        for line in response_text.split("\n"):
+            find_num = re.findall(r"\d+\.\d+|\d+", line)
+            for val in find_num:
+                v = float(val)
+                if 0.0 < v < 1.0:
+                    print("SCORING (première ligne float <1):", v)
+                    return v
+        print("SCORING : aucune valeur raisonnable trouvée dans", repr(response_text))
+        return 0.0
     except Exception as e:
         print("Erreur scoring LLM:", e)
-        score = 0.0
-    print("Final score:", score)
-    return score
+        return 0.0
 
 ALLOWED_CONTRACTS = [
     "Intérimaire avec option sur durée indéterminée", "Durée indéterminée",
