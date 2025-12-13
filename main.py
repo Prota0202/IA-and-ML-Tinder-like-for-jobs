@@ -69,7 +69,7 @@ prompt = PromptTemplate(
         "Le score doit se baser sur les compétences, les expériences et la formation du candidat.\n"
         "Donne un score élevé uniquement si le CV mentionne clairement des compétences ou expériences réellement utiles pour ce poste.\n"
         "Si le CV ne cite aucune compétence pertinente, donne un score faible (proche de 0).\n"
-        "Ne prends pas en compte la langue ni le niveau social, seulement les critères métier/technique.\n"
+        "Ne prends pas en compte le niveau social, seulement les critères métier/technique et les langues.\n"
         "CV :\n{cv}\nJob :\n{job}"
     ),
 )
