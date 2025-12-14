@@ -6,6 +6,7 @@ import math
 import unicodedata
 from typing import Any, Dict, List, Optional, Tuple
 import requests
+from green_metrics import tracker
 
 from dotenv import load_dotenv
 
@@ -439,6 +440,8 @@ def call_mistral_fallback(cv_text: str) -> str:
     """Direct HTTP call to Mistral if LangChain unavailable. Returns raw content or error message."""
     if not API_KEY:
         return "(Pas de clé API)"
+    
+    tracker.start()  # Début du tracking
     url = "https://api.mistral.ai/v1/chat/completions"
     headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
     payload = {
@@ -451,8 +454,17 @@ def call_mistral_fallback(cv_text: str) -> str:
         if resp.status_code != 200:
             return f"Erreur HTTP {resp.status_code}: {resp.text}"
         data = resp.json()
+        
+        # Récupère les tokens depuis la réponse Mistral
+        usage = data.get("usage", {})
+        input_tokens = usage.get("prompt_tokens", 0)
+        output_tokens = usage.get("completion_tokens", 0)
+        tracker.add_mistral_tokens(input_tokens, output_tokens)
+        
+        tracker.stop()  # Fin du tracking
         return data.get("choices", [{}])[0].get("message", {}).get("content", "")
     except Exception as e:
+        tracker.stop()
         return f"Exception requête: {e}"
 
 

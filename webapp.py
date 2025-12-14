@@ -10,6 +10,8 @@ import pandas as pd
 from typing import Dict, Any
 from flask import Flask, request, redirect, url_for, session, make_response
 import requests
+from green_metrics import tracker
+
 
 try:
     import PyPDF2
@@ -70,6 +72,7 @@ from feature_engineering import enrich_features
 INFERENCE_THRESHOLD = 0.79
 APP_MODEL = joblib.load('models/hire_tabular_core.joblib')
 
+
 def infer_score(features: dict):
     cols = APP_MODEL.feature_names_in_ if hasattr(APP_MODEL, "feature_names_in_") else APP_MODEL.get_booster().feature_names
     row = {k: features.get(k, np.nan) for k in cols}
@@ -87,7 +90,9 @@ def score_llm_profile_offer(profile, offer):
         "LE SCORE DOIT ÊTRE UNIQUE, DÉCIMAL, ENTRE 0 ET 1, SANS AUCUNE AUTRE INFORMATION, NI JSON, NI TEXTE, NI COMMENTAIRE, JUSTE UN FLOAT SUR UNE LIGNE !"
     )
     try:
+        tracker.start()
         response = call_mistral_fallback(prompt)
+        tracker.stop()
         response_text = str(response).strip()
         print("=== LLM Response reçu pour le score :", repr(response_text))
         for line in response_text.split("\n"):
@@ -510,6 +515,28 @@ def upload():
             os.unlink(tmp.name)
         except Exception:
             pass
+
+@app.route("/green-report", methods=["GET"])
+def green_report():
+    """Affiche le rapport d'émissions CO2 et tokens consommés"""
+    report = tracker.get_report()
+    html = f"""
+    <html>
+    <body style="font-family: Arial; margin: 20px;">
+        <h1>Rapport Écologique</h1>
+        <div style="background: #f0f0f0; padding: 20px; border-radius: 8px;">
+            <p><b>Tokens Mistral (total):</b> {report['total_tokens']:,}</p>
+            <p><b>Tokens entrants:</b> {report['total_tokens_input']:,}</p>
+            <p><b>Tokens sortants:</b> {report['total_tokens_output']:,}</p>
+            <hr>
+            <p><b>Émissions CO2:</b> {report['total_emissions_kg']:.6f} kg</p>
+            <p style="font-size: 12px; color: #666;">Scope 2 (électricité) - Tracking CodeCarbon</p>
+        </div>
+        <a href="/">Retour</a>
+    </body>
+    </html>
+    """
+    return html
 
 def render_profile_form(profile):
     questions = session.get("llm_questions") or []

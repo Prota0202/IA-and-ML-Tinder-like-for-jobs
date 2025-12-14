@@ -8,3 +8,4 @@ PyPDF2
 Flask>=3.0
 matplotlib>=3.8
 seaborn>=0.13
+codecarbon>=1.30.0
