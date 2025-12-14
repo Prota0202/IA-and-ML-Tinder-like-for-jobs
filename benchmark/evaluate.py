@@ -33,7 +33,6 @@ def score_baseline(profile, offer):
 def profile_to_tabular_features(profile: dict) -> dict:
     import numpy as np
     feats = {}
-    # Simpliste ici: à adapter selon tes extraction réelles!
     etud = profile.get("etudes")
     if etud and isinstance(etud, list) and etud:
         highest = etud[0].get("diplome", "").lower()
@@ -49,9 +48,16 @@ def profile_to_tabular_features(profile: dict) -> dict:
             feats["EducationLevel"] = np.nan
     else:
         feats["EducationLevel"] = np.nan
-    feats["Age"] = np.nan # Pas dans le dataset latent !
-    feats["PreviousCompanies"] = np.nan
-    feats["ExperienceYears"] = np.nan
+    feats["Age"] = profile.get("age", 30) 
+    feats["PreviousCompanies"] = profile.get("previous_companies", 1)
+    feats["ExperienceYears"] = profile.get("experience_years", 2)
+
+    feats["InterviewScore"] = 5  # Score neutre
+    feats["SkillScore"] = 5      # Score neutre
+    feats["PersonalityScore"] = 5 # Score neutre
+    feats["RecruitmentStrategy"] = 1 
+    feats["DistanceFromCompany"] = 10 # Distance arbitraire moyenne
+    feats["Gender"] = 0 # Ou aléatoire si tu veux
     return feats
 
 def score_tabular(profile, offer=None):
@@ -64,7 +70,7 @@ def score_tabular(profile, offer=None):
 
 scorers = {
     "baseline" : score_baseline,
-    "tabular"  : score_tabular,
+    #"tabular"  : score_tabular,
     "LLM"      : score_llm_profile_offer,
 }
 
@@ -81,7 +87,8 @@ for name, scorer in scorers.items():
         else:
             s = scorer(cv, job)
         y_pred.append(s)
-        y_true.append(row['ground_truth'])
+        raw_val = float(row['ground_truth'])
+        y_true.append(1 if raw_val >= 0.5 else 0)
     results[name] = (y_true, y_pred)
     acc = accuracy_score(y_true, [int(x > 0.5) for x in y_pred])
     try:
@@ -107,7 +114,7 @@ print("\nCourbe ROC sauvegardée -> benchmark/roc_comparison.png")
 table = pd.DataFrame({
     "id_cv": df["id_cv"], "id_job": df["id_job"], "label": df["ground_truth"],
     "baseline": results["baseline"][1],
-    "tabular":  results["tabular"][1],
+    #"tabular":  results["tabular"][1],
     "LLM":      results["LLM"][1],
 })
 print("\nTableau comparatif :\n", table)

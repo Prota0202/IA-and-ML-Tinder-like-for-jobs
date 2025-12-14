@@ -93,5 +93,14 @@ def main():
     print("Classification report (best model):")
     print(classification_report(y_valid, best_pred))
 
+    import matplotlib.pyplot as plt
+    from sklearn.metrics import ConfusionMatrixDisplay
+    
+    print("Génération de la matrice de confusion...")
+    disp = ConfusionMatrixDisplay.from_estimator(best_model, X_valid, y_valid, cmap=plt.cm.Blues)
+    plt.title(f"Confusion Matrix ({best_name})")
+    plt.savefig("models/confusion_matrix_ml.png")
+    print("Sauvegardé dans models/confusion_matrix_ml.png")
+
 if __name__ == "__main__":
     main()
