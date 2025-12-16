@@ -456,6 +456,7 @@ def html_page(title, body):
             <a href='{url_for("offers")}' {'class="active"' if title=="Offres" else ''}>Offres</a>
             <a href='{url_for("accepted")}' {'class="active"' if title=="Acceptées" else ''}>Acceptées</a>
             <a href='{url_for("quiz")}' {'class="active"' if title=="Quiz" else ''}>Se tester</a>
+            <a href='{url_for("green_report")}' {'class="active"' if title=="Green Report" else ''}> Green Report</a>
         </nav>
     </header>
     <main>
@@ -516,27 +517,42 @@ def upload():
         except Exception:
             pass
 
-@app.route("/green-report", methods=["GET"])
+@app.route("/green-report", methods=["GET", "POST"])
 def green_report():
     """Affiche le rapport d'émissions CO2 et tokens consommés"""
+    if request.method == "POST":
+        # Finaliser : le CSV est déjà enregistré par CodeCarbon, on reset juste les compteurs
+        tracker.reset()
+        return redirect(url_for("index"))
+    
     report = tracker.get_report()
-    html = f"""
-    <html>
-    <body style="font-family: Arial; margin: 20px;">
+    body = f"""
         <h1>Rapport Écologique</h1>
-        <div style="background: #f0f0f0; padding: 20px; border-radius: 8px;">
-            <p><b>Tokens Mistral (total):</b> {report['total_tokens']:,}</p>
+        <div class="section-card">
+            <h3>Émissions CO2</h3>
+            <p><b>Scope 2 (Local, mix BEL):</b> {report['scope2_local']:.8f} kgCO2</p>
+            <p><b>Scope 3 (Cloud/Tokens):</b> {report['scope3_cloud']:.8f} kgCO2</p>
+            <p style="font-size: 1.2em; margin-top: 12px;"><b>TOTAL CO2:</b> <span style="color: #357EFE;">{report['total_co2']:.8f} kg</span></p>
+            <p><b>Équivalent km (voiture):</b> {report['equiv_km']:.2f} km</p>
+        </div>
+        <div class="section-card">
+            <h3>Tokens Mistral</h3>
             <p><b>Tokens entrants:</b> {report['total_tokens_input']:,}</p>
             <p><b>Tokens sortants:</b> {report['total_tokens_output']:,}</p>
-            <hr>
-            <p><b>Émissions CO2:</b> {report['total_emissions_kg']:.6f} kg</p>
-            <p style="font-size: 12px; color: #666;">Scope 2 (électricité) - Tracking CodeCarbon</p>
+            <p><b>Total:</b> {report['total_tokens']:,}</p>
         </div>
-        <a href="/">Retour</a>
-    </body>
-    </html>
+        <p style="font-size: 0.9em; color: #666; margin-top: 20px;">
+            Scope 2 mesuré avec CodeCarbon (mix énergétique belge). 
+            Scope 3 estimé via formule académique (0.0004 kWh/1000 tokens, 0.475 kgCO2/kWh).
+        </p>
+        <p style="font-size: 0.85em; color: #888; margin-top: 10px;">
+            Les données sont automatiquement sauvegardées dans <code>emissions.csv</code>
+        </p>
+        <form method="post" style="margin-top: 20px;">
+            <button class="btn" type="submit"> Finaliser</button>
+        </form>
     """
-    return html
+    return html_page("Green Report", body)
 
 def render_profile_form(profile):
     questions = session.get("llm_questions") or []
@@ -750,7 +766,7 @@ def quiz():
         except Exception as e:
             msg = f"<div class='section-card' style='color:red;'>Erreur : {e}</div>"
     body = """
-        <h1>🎯 Simulation d'embauche (sans CV)</h1>
+        <h1>Simulation d'embauche (sans CV)</h1>
         <div class="section-card">
             <form method="post">
                 <label>PreviousCompanies</label>

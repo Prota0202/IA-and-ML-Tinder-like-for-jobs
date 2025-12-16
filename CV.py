@@ -16,11 +16,13 @@ try:
     from langchain.prompts import PromptTemplate  # type: ignore
     from langchain.chains import LLMChain  # type: ignore
     from langchain_mistralai.chat_models import ChatMistralAI  # type: ignore
+    from langchain_core.callbacks import BaseCallbackHandler  # type: ignore
     LANGCHAIN_AVAILABLE = True
 except Exception:
     PromptTemplate = None  # type: ignore
     LLMChain = None  # type: ignore
     ChatMistralAI = None  # type: ignore
+    BaseCallbackHandler = None  # type: ignore
     import requests  # fallback HTTP direct if needed
 
 load_dotenv()
@@ -436,12 +438,24 @@ def build_chain():
     return LLMChain(llm=llm, prompt=prompt)
 
 
+# --- LangChain callback pour logger les tokens et alimenter le tracker ---
+class TokenLogger(BaseCallbackHandler if BaseCallbackHandler else object):
+    def on_llm_end(self, response, **kwargs):  # type: ignore
+        try:
+            usage = (response.llm_output or {}).get("token_usage", {})
+            inp = usage.get("prompt_tokens", 0)
+            out = usage.get("completion_tokens", 0)
+            tracker.add_mistral_tokens(int(inp or 0), int(out or 0))
+        except Exception:
+            pass
+
+
 def call_mistral_fallback(cv_text: str) -> str:
     """Direct HTTP call to Mistral if LangChain unavailable. Returns raw content or error message."""
     if not API_KEY:
         return "(Pas de clé API)"
     
-    tracker.start()  # Début du tracking
+   # tracker.start()  # Début du tracking
     url = "https://api.mistral.ai/v1/chat/completions"
     headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
     payload = {
@@ -455,13 +469,10 @@ def call_mistral_fallback(cv_text: str) -> str:
             return f"Erreur HTTP {resp.status_code}: {resp.text}"
         data = resp.json()
         
-        # Récupère les tokens depuis la réponse Mistral
-        usage = data.get("usage", {})
-        input_tokens = usage.get("prompt_tokens", 0)
-        output_tokens = usage.get("completion_tokens", 0)
-        tracker.add_mistral_tokens(input_tokens, output_tokens)
+        # Récupère les tokens depuis la réponse Mistral et les envoie au tracker
+        tracker.add_mistral_tokens(data)
         
-        tracker.stop()  # Fin du tracking
+        #tracker.stop()  # Fin du tracking
         return data.get("choices", [{}])[0].get("message", {}).get("content", "")
     except Exception as e:
         tracker.stop()
@@ -596,7 +607,12 @@ def main():
         chain = build_chain()
         if chain is not None:
             try:
-                raw = chain.run({"cv_text": cv_text})
+                # Utilise TokenLogger pour tracer les tokens côté LangChain
+                if BaseCallbackHandler:
+                    raw_resp = chain.invoke({"cv_text": cv_text}, config={"callbacks": [TokenLogger()]})
+                    raw = raw_resp.get("text") if isinstance(raw_resp, dict) else raw_resp
+                else:
+                    raw = chain.run({"cv_text": cv_text})
             except Exception as e:
                 raw = f"Erreur LLM: {e}"
         else:
