@@ -60,21 +60,33 @@ class GreenTracker:
     def get_report(self):
         """Calcule le TOTAL (Local + Cloud)"""
         
-        # 1. Calcul Scope 3 (Cloud / Tokens)
-        # Formule académique : 0.0004 kWh pour 1000 tokens
-        kwh_per_1000_tokens = 0.0004
-        carbon_intensity_cloud = 0.475 # kgCO2/kWh (Moyenne mondiale)
-        
         total_tokens = self.total_input_tokens + self.total_output_tokens
-        energy_llm_kwh = (total_tokens / 1000) * kwh_per_1000_tokens
-        emissions_llm_kg = energy_llm_kwh * carbon_intensity_cloud
         
-        # 2. Total
-        total_co2_kg = self.last_emissions_local + emissions_llm_kg
+        # Nouveau calcul réaliste
+        # Scope 2 (Électricité Cloud - Mistral France)
+        kwh_per_1000_tokens = 0.0004
+        carbon_intensity_france = 0.0595  # kgCO2/kWh (Moyenne France car Mistral hébergé en France)
+        co2_elec = (total_tokens / 1000) * kwh_per_1000_tokens * carbon_intensity_france
+
+        # Scope 3 (Matériel/Embodied Carbon)
+        # Large2 utilise 1,14g pour 400 tokens -> 0,00285g par token 
+        # Large2 est 5 fois plus puissant que small -> on divise par 5
+        embodied_carbon_per_1000_tokens = ((1.14 / 5) * 1000 / 400) / 1000  # conversion en kgCO2
+        co2_embodied = (total_tokens / 1000) * embodied_carbon_per_1000_tokens
+        
+        print(f"[GreenTracker] Co2 élec cloud: {co2_elec:.6f} kg, Co2 embodied: {co2_embodied:.6f} kg")
+        
+        # Total Cloud (élec + embodied)
+        co2_cloud_total = co2_elec + co2_embodied
+        
+        # Total final (Local PC + Cloud)
+        total_co2_kg = self.last_emissions_local + co2_cloud_total
         
         return {
             "scope2_local": self.last_emissions_local,
-            "scope3_cloud": emissions_llm_kg,
+            "scope2_cloud_elec": co2_elec,
+            "scope3_cloud_embodied": co2_embodied,
+            "scope3_cloud_total": co2_cloud_total,
             "total_tokens": total_tokens,
             "total_tokens_input": self.total_input_tokens,
             "total_tokens_output": self.total_output_tokens,

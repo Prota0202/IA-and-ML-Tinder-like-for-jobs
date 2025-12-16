@@ -62,6 +62,7 @@ from CV import (
     find_missing,
     build_chain,
     call_mistral_fallback,
+    call_mistral_generic,
     safe_json_extract,
     API_KEY,
 )
@@ -71,6 +72,9 @@ from feature_engineering import enrich_features
 
 INFERENCE_THRESHOLD = 0.79
 APP_MODEL = joblib.load('models/hire_tabular_core.joblib')
+
+# === Scoring mode ===
+USE_BATCHING = True  # Basculer entre batch scoring (Green AI) et ligne par ligne
 
 
 def infer_score(features: dict):
@@ -107,6 +111,102 @@ def score_llm_profile_offer(profile, offer):
     except Exception as e:
         print("Erreur scoring LLM:", e)
         return 0.0
+
+def batch_score_offers(profile, offers_df, batch_size=10):
+    """
+    Score les offres par batch pour réduire les appels API (Green AI / batching).
+    IMPORTANT: On passe JUSTE le scoring simple, sans JSON complexe.
+    
+    Args:
+        profile (dict): Le profil du candidat.
+        offers_df (pd.DataFrame): DataFrame des offres.
+        batch_size (int): Nombre d'offres par batch (défaut 5).
+    
+    Returns:
+        list: Liste de floats (match_score) avec même longueur que offers_df.
+    """
+    scores = []
+    num_offers = len(offers_df)
+    
+    for batch_start in range(0, num_offers, batch_size):
+        batch_end = min(batch_start + batch_size, num_offers)
+        batch_indices = list(range(batch_start, batch_end))
+        batch_offers = offers_df.iloc[batch_start:batch_end]
+        
+        # === PROFIL COMPLET (comme en mode normal, mais envoie UNE FOIS) ===
+        profile_json = json.dumps(profile, ensure_ascii=False, indent=2)
+        
+        # === OFFRES EN LISTE STRUCTURÉE (simplifié mais suffisant) ===
+        offers_list = []
+        for pos, (idx, row) in enumerate(batch_offers.iterrows(), 1):
+            offer_info = {
+                "position": pos,
+                "titre": row.get("titreoffre", "N/A"),
+                "employeur": row.get("nomemployeur", "N/A"),
+                "description": (str(row.get("descriptifoffre", ""))[:200]) if row.get("descriptifoffre") else "N/A"
+            }
+            offers_list.append(offer_info)
+        offers_json = json.dumps(offers_list, ensure_ascii=False, indent=2)
+        
+        # === PROMPT AVEC PROFIL COMPLET ===
+        prompt = (
+            "Profil du candidat:\n" + profile_json +
+            "\n\nOffres à évaluer (dans l'ordre):\n" + offers_json +
+            "\n\nFor each offer (in order), give a compatibility score between 0 and 1.\n"
+            "RESPOND WITH ONLY A JSON ARRAY OF SCORES, in the same order as offers.\n"
+            "Example: [0.85, 0.42, 0.91]\n"
+            "RULES:\n"
+            "- ONLY output the array, no text before or after\n"
+            "- NO markdown (no ```json)\n"
+            "- NO comments\n"
+            "- Floats between 0 and 1\n"
+            "- START with [ and END with ]"
+        )
+        
+        try:
+            tracker.start()
+            response = call_mistral_generic(prompt)
+            tracker.stop()
+            
+            response_text = str(response).strip()
+            # Remove markdown if present
+            response_text = response_text.replace("```json", "").replace("```", "").strip()
+            print(f"[BATCH {batch_start}-{batch_end}] Response: {repr(response_text[:100])}")
+            
+            # Extract JSON array
+            start_idx = response_text.find("[")
+            end_idx = response_text.rfind("]")
+            
+            if start_idx != -1 and end_idx != -1:
+                json_str = response_text[start_idx:end_idx+1]
+                batch_scores = json.loads(json_str)
+                
+                if not isinstance(batch_scores, list):
+                    batch_scores = [0.0] * len(batch_indices)
+                else:
+                    batch_scores = [float(s) if s is not None else 0.0 for s in batch_scores]
+                    while len(batch_scores) < len(batch_indices):
+                        batch_scores.append(0.0)
+                    batch_scores = batch_scores[:len(batch_indices)]
+            else:
+                print(f"[BATCH {batch_start}-{batch_end}] No [ ] found, fallback")
+                batch_scores = [0.0] * len(batch_indices)
+            
+            scores.extend(batch_scores)
+            print(f"[BATCH {batch_start}-{batch_end}] Done: {batch_scores}")
+            
+        except json.JSONDecodeError as je:
+            print(f"[BATCH {batch_start}-{batch_end}] JSON error: {je}")
+            tracker.stop()
+            scores.extend([0.0] * len(batch_indices))
+        except Exception as e:
+            print(f"[BATCH {batch_start}-{batch_end}] Error: {e}")
+            tracker.stop()
+            scores.extend([0.0] * len(batch_indices))
+    
+    while len(scores) < num_offers:
+        scores.append(0.0)
+    return scores[:num_offers]
 
 ALLOWED_CONTRACTS = [
     "Intérimaire avec option sur durée indéterminée", "Durée indéterminée",
@@ -530,10 +630,14 @@ def green_report():
         <h1>Rapport Écologique</h1>
         <div class="section-card">
             <h3>Émissions CO2</h3>
-            <p><b>Scope 2 (Local, mix BEL):</b> {report['scope2_local']:.8f} kgCO2</p>
-            <p><b>Scope 3 (Cloud/Tokens):</b> {report['scope3_cloud']:.8f} kgCO2</p>
-            <p style="font-size: 1.2em; margin-top: 12px;"><b>TOTAL CO2:</b> <span style="color: #357EFE;">{report['total_co2']:.8f} kg</span></p>
-            <p><b>Équivalent km (voiture):</b> {report['equiv_km']:.2f} km</p>
+            <p><b> Local PC, mix BEL:</b> {report['scope2_local']:.8f} kgCO2</p>
+            <p><b> Cloud Électricité FR:</b> {report['scope2_cloud_elec']:.8f} kgCO2</p>
+            <p><b> Embodied Carbon, Dette Matérielle :</b> {report['scope3_cloud_embodied']:.8f} kgCO2</p>
+            <p><b> Total Cloud (Élec + Embodied):</b> {report['scope3_cloud_total']:.8f} kgCO2</p>
+            <p style="font-size: 1.2em; margin-top: 12px; padding-top: 10px; border-top: 2px solid #357EFE;">
+                <b> TOTAL CO2:</b> <span style="color: #357EFE;">{report['total_co2']:.8f} kg</span>
+            </p>
+            <p><b> Équivalent km (voiture):</b> {report['equiv_km']:.2f} km</p>
         </div>
         <div class="section-card">
             <h3>Tokens Mistral</h3>
@@ -542,8 +646,8 @@ def green_report():
             <p><b>Total:</b> {report['total_tokens']:,}</p>
         </div>
         <p style="font-size: 0.9em; color: #666; margin-top: 20px;">
-            Scope 2 mesuré avec CodeCarbon (mix énergétique belge). 
-            Scope 3 estimé via formule académique (0.0004 kWh/1000 tokens, 0.475 kgCO2/kWh).
+            <b>Méthodologie:</b> Scope 2 local mesuré avec CodeCarbon (mix belge). 
+            Cloud: Scope 2 (électricité France 0.0595 kgCO2/kWh) + Scope 3 (embodied carbon matériel GPU).
         </p>
         <p style="font-size: 0.85em; color: #888; margin-top: 10px;">
             Les données sont automatiquement sauvegardées dans <code>emissions.csv</code>
@@ -665,7 +769,14 @@ def profile():
 
         # === SCORING LLM POUR CHAQUE OFFRE ===
         print("Scoring des offres via LLM (peut prendre du temps)...")
-        offers_df["match_score"] = offers_df.apply(lambda row: score_llm_profile_offer(updated, dict(row)), axis=1)
+        if USE_BATCHING:
+            print(f"[SCORING] Mode BATCH (Green AI) - batch_size=10")
+            match_scores = batch_score_offers(updated, offers_df, batch_size=10)
+            offers_df["match_score"] = match_scores
+        else:
+            print("[SCORING] Mode LIGNE PAR LIGNE (classique)")
+            offers_df["match_score"] = offers_df.apply(lambda row: score_llm_profile_offer(updated, dict(row)), axis=1)
+        
         offers_df = offers_df.sort_values("match_score", ascending=False)
 
         if sid:

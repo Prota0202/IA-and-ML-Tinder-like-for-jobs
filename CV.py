@@ -479,6 +479,32 @@ def call_mistral_fallback(cv_text: str) -> str:
         return f"Exception requête: {e}"
 
 
+def call_mistral_generic(prompt_text: str) -> str:
+    """Generic HTTP call to Mistral for any prompt (not just CV extraction)."""
+    if not API_KEY:
+        return "(Pas de clé API)"
+    
+    url = "https://api.mistral.ai/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
+    payload = {
+        "model": "mistral-large-latest",
+        "messages": [{"role": "user", "content": prompt_text}],
+        "temperature": 0.2,
+    }
+    try:
+        resp = requests.post(url, headers=headers, data=json.dumps(payload), timeout=60)
+        if resp.status_code != 200:
+            return f"Erreur HTTP {resp.status_code}: {resp.text}"
+        data = resp.json()
+        
+        # Récupère les tokens depuis la réponse Mistral et les envoie au tracker
+        tracker.add_mistral_tokens(data)
+        
+        return data.get("choices", [{}])[0].get("message", {}).get("content", "")
+    except Exception as e:
+        return f"Exception requête: {e}"
+
+
 # ---------------------------- Parsing JSON ----------------------------
 
 
