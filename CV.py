@@ -487,7 +487,7 @@ def call_mistral_generic(prompt_text: str) -> str:
     url = "https://api.mistral.ai/v1/chat/completions"
     headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
     payload = {
-        "model": "mistral-large-latest",
+        "model": "mistral-small-latest",
         "messages": [{"role": "user", "content": prompt_text}],
         "temperature": 0.2,
     }
